@@ -1,6 +1,8 @@
 const Post = require("../models/post.model");
 const Media = require("../models/media.model");
 const PostMedia = require("../models/postMedia.model");
+const PostReaction = require("../models/post_reaction.model");
+const mongoose = require("mongoose");
 
 const createPost = async (req, res) => {
   try {
@@ -195,6 +197,89 @@ const getTrashedPosts = async (req, res) => {
   }
 };
 
+
+//* Reaction of Post:
+// Tạo hoặc cập nhật reaction (nếu đã tồn tại thì update)
+const reactToPost = async (req, res) => {
+    try {
+        let { post_id, type } = req.body;
+        const user_id = req.user._id;
+
+        if (!type) type = "like"; // Mặc định là "like" nếu không có type
+
+        const reaction = await PostReaction.findOneAndUpdate(
+            { user_id, post_id },
+            { type },
+            { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true }
+        );
+
+        res.status(201).json({ message: "Reaction saved", reaction });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+// Xoá reaction của user với post
+const removeReaction = async (req, res) => {
+    try {
+        const { post_id } = req.body;
+        const user_id = req.user._id;
+
+        await PostReaction.findOneAndDelete({ user_id, post_id });
+
+        res.status(200).json({ message: "Reaction removed" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+// Lấy tất cả reaction của 1 post
+const getReactionsOfPost = async (req, res) => {
+    try {
+        const { post_id } = req.params;
+        const reactions = await PostReaction.find({ post_id }).populate("user_id", "username"); //Thêm vào các trường tương ứng nếu cần thiết
+
+        //Đếm
+        const counts = await PostReaction.aggregate([
+            { $match: { post_id: new mongoose.Types.ObjectId(post_id) } },
+            { $group: { _id: "$type", count: { $sum: 1 } } }
+        ]);
+
+
+        res.status(200).json({ reactions, counts });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+// Lấy reaction của user với post (Có thể truyền 1 hoặc nhiều post_id)
+// Dùng cho trường hợp render để hiển thị trạng thái nút tương tác
+const getUserReactionsForPosts = async (req, res) => {
+    try {
+        const { post_ids } = req.body;
+        const user_id = req.user._id;
+
+        if (!Array.isArray(post_ids) || post_ids.length === 0) {
+            return res.status(400).json({ error: "post_ids must be a non-empty array" });
+        }
+
+
+        const reactions = await PostReaction.find({
+            post_id: { $in: post_ids },
+            user_id
+        });
+
+        const result = {};
+        reactions.forEach(r => {
+            result[r.post_id.toString()] = r.type;
+        });
+
+        res.status(200).json({ reactions: result });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
 module.exports = {
   createPost,
   getAllPostsbyUser,
@@ -203,4 +288,8 @@ module.exports = {
   updatePost,
   restorePost,
   getTrashedPosts,
+  reactToPost,
+  removeReaction,
+  getReactionsOfPost,
+  getUserReactionsForPosts
 };

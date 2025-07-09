@@ -9,7 +9,7 @@ const postSchema = new mongoose.Schema(
     },
     content: { type: String },
     type: { type: String, enum: ["Public", "Private"], default: "Public" },
-    isDeleted: { type: Boolean, default: false },
+    is_deleted: { type: Boolean, default: false },
     deleted_at: { type: Date, default: null },
   },
   { timestamps: true }

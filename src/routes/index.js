@@ -2,6 +2,7 @@ const express = require("express");
 const userRoutes = require("./users");
 const tokenRoutes = require("./token");
 const postRoutes = require("./post.route");
+const commentRoutes = require("./comment.route");
 const router = express.Router();
 
 router.get("/", (req, res) => {
@@ -11,6 +12,7 @@ router.get("/", (req, res) => {
 router.use("/user", userRoutes);
 router.use("/refresh", tokenRoutes);
 router.use("/post", postRoutes);
+router.use("/comment", commentRoutes);
 
 router
 
