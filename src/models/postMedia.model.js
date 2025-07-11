@@ -6,11 +6,13 @@ const postMediaSchema = new mongoose.Schema({
     ref: "Post",
     required: true,
   },
-  media_id: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Media",
-    required: true,
-  },
+  media_id: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Media",
+      required: true,
+    },
+  ],
 });
 
 postMediaSchema.index({ post_id: 1, media_id: 1 }, { unique: true });

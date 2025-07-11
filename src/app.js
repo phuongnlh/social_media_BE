@@ -7,9 +7,19 @@ const session = require("express-session");
 const MongoStore = require("connect-mongo");
 const indexRoute = require("./routes/index");
 const cookieParser = require("cookie-parser");
+const { Server } = require("socket.io");
+const http = require("http");
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*", // chỉnh lại nếu cần bảo mật
+    methods: ["GET", "POST"],
+  },
+});
 
+require("./socket")(io);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
