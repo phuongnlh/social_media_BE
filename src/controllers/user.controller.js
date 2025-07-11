@@ -1,13 +1,12 @@
 const User = require("../models/user.model");
 const { genPwd, validatePwd } = require("../utils/pwd_utils");
-const { signToken } = require("../utils/jwt_utils");
-const { sendVerificationEmail, sendResetPasswordEmail } = require("../utils/email_utils");
-const jwt = require("jsonwebtoken");
+const { signToken, verifyToken } = require("../utils/jwt_utils");
+const {
+  sendVerificationEmail,
+  sendResetPasswordEmail,
+} = require("../utils/email_utils");
 const redisClient = require("../config/database.redis");
-const publicKey = require("fs").readFileSync(
-  "./src/config/public_key.pem",
-  "utf-8"
-);
+
 const registerUser = async (req, res) => {
   try {
     const { username, email, password } = req.body;
@@ -32,9 +31,7 @@ const registerUser = async (req, res) => {
 const verifyEmail = async (req, res) => {
   try {
     const { token } = req.query;
-    const payload = jwt.verify(token, publicKey, {
-      algorithms: ["RS256"],
-    });
+    const payload = verifyToken(token);
     const user = await User.findById(payload.id);
     if (!user) {
       return res.status(404).json({ message: "User not found" });
@@ -73,11 +70,13 @@ const loginUser = async (req, res) => {
     await redisClient.set(`refresh:${user._id}:${refreshToken}`, "valid", {
       EX: 60 * 60 * 24 * 7,
     });
-
+    const userRefreshTokensSet = `user-sessions:${user._id}`;
+    await redisClient.sAdd(userRefreshTokensSet, refreshToken);
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
-      path: "/api/v1/refresh",
+      path: "/api/v1/",
       maxAge: 7 * 24 * 60 * 60 * 1000,
+      sameSite: "Lax",
     });
     res.status(200).json({ accessToken });
   } catch (err) {
@@ -95,7 +94,7 @@ const logoutUser = async (req, res) => {
     }
 
     // ✅ Đưa access token vào blacklist
-    const decoded = jwt.decode(token);
+    const decoded = verifyToken(token);
     const exp = decoded?.exp;
     const now = Math.floor(Date.now() / 1000);
     const ttl = exp - now;
@@ -105,12 +104,17 @@ const logoutUser = async (req, res) => {
     }
 
     // ✅ Xóa refresh token trong Redis
-    const refreshPayload = jwt.decode(refreshToken);
+    const refreshPayload = verifyToken(refreshToken);
     const refreshKey = `refresh:${refreshPayload.id}:${refreshToken}`;
-    await redisClient.del(refreshKey);
+    const userRefreshTokensSet = `user-sessions:${refreshPayload.id}`;
 
+    // Dùng multi để đảm bảo cả hai lệnh cùng được thực thi
+    const multi = redisClient.multi();
+    multi.del(refreshKey); // Xóa key của token
+    multi.sRem(userRefreshTokensSet, refreshToken); // Xóa token khỏi Set
+    await multi.exec();
     // ✅ Xóa cookie
-    res.clearCookie("refreshToken", { path: "/api/v1/refresh" });
+    res.clearCookie("refreshToken", { path: "/api/v1/" });
 
     res.json({ message: "Logout successful" });
   } catch (err) {
@@ -128,7 +132,7 @@ const logoutAllUser = async (req, res) => {
     }
 
     // ✅ Đưa accessToken hiện tại vào blacklist
-    const decoded = jwt.verify(token);
+    const decoded = verifyToken(token);
     const exp = decoded?.exp;
     const now = Math.floor(Date.now() / 1000);
     const ttl = exp - now;
@@ -138,17 +142,23 @@ const logoutAllUser = async (req, res) => {
     }
 
     // ✅ Xoá tất cả refreshToken của user trong Redis
-    const refreshPayload = jwt.decode(refreshToken);
+    const refreshPayload = verifyToken(refreshToken);
     const userId = refreshPayload.id;
-
     // Lấy tất cả các key refresh của user
-    const keys = await redisClient.keys(`refresh:${userId}:*`);
-    if (keys.length > 0) {
-      await Promise.all(keys.map((key) => redisClient.del(key)));
+    const userRefreshTokensSet = `user-sessions:${userId}`;
+    const allTokens = await redisClient.sMembers(userRefreshTokensSet);
+    if (allTokens.length > 0) {
+      // Dùng multi để thực hiện nhiều lệnh cùng lúc
+      const multi = redisClient.multi();
+      allTokens.forEach((token) => {
+        multi.del(`refresh:${userId}:${token}`);
+      });
+      multi.del(userRefreshTokensSet); // Xóa cả set
+      await multi.exec();
     }
 
     // ✅ Xoá cookie
-    res.clearCookie("refreshToken", { path: "/api/v1/refresh" });
+    res.clearCookie("refreshToken", { path: "/api/v1/" });
 
     res.json({ message: "Logout all sessions successful" });
   } catch (err) {
@@ -180,6 +190,20 @@ const changePassword = async (req, res) => {
     user.salt = salt;
     await user.save();
 
+    const userRefreshTokensSet = `user-sessions:${user._id}`;
+    const allTokens = await redisClient.sMembers(userRefreshTokensSet);
+    if (allTokens.length > 0) {
+      const multi = redisClient.multi();
+      allTokens.forEach((token) => {
+        multi.del(`refresh:${user._id}:${token}`);
+      });
+      multi.del(userRefreshTokensSet);
+      await multi.exec();
+    }
+
+    // Xóa cookie của phiên hiện tại
+    res.clearCookie("refreshToken", { path: "/api/v1/" });
+
     res.json({ message: "Password changed successfully" });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -208,9 +232,7 @@ const resetPassword = async (req, res) => {
   const { newPassword } = req.body;
 
   try {
-    const decoded = jwt.verify(token, publicKey, {
-      algorithms: ["RS256"],
-    });
+    const decoded = verifyToken(token);
     const user = await User.findById(decoded.id);
 
     if (!user) return res.status(400).json({ message: "User not found" });
@@ -222,7 +244,15 @@ const resetPassword = async (req, res) => {
 
     res.json({ message: "Password reset successful" });
   } catch (err) {
-    res.status(400).json({ message: "Invalid or expired token" });
+    // Nếu lỗi là do token không hợp lệ hoặc hết hạn
+    if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
+      return res.status(401).json({ message: "Invalid or expired token" });
+    }
+    // Các lỗi khác là lỗi server
+    console.error(err); // Ghi lại lỗi để debug
+    return res
+      .status(500)
+      .json({ message: "An internal server error occurred." });
   }
 };
 
