@@ -10,7 +10,12 @@ const postReactionSchema = new mongoose.Schema(
     post_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Post",
-      required: true,
+      required: false,
+    },
+    postgr_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "GroupPost",
+      required: false,
     },
     type: {
       type: String,
@@ -20,6 +25,7 @@ const postReactionSchema = new mongoose.Schema(
   },
   { timestamps: { createdAt: true, updatedAt: false } }
 );
-postReactionSchema.index({ user_id: 1, post_id: 1 }, { unique: true });
+postReactionSchema.index({ user_id: 1, post_id: 1 }, { unique: true, partialFilterExpression: { post_id: { $exists: true } } });
+postReactionSchema.index({ user_id: 1, postgr_id: 1 }, { unique: true, partialFilterExpression: { postgr_id: { $exists: true } } });
 
 module.exports = mongoose.model("PostReaction", postReactionSchema);

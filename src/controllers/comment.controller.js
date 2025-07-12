@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
-const Comment = require("../models/comment.model");
-const CommentReaction = require("../models/comment_reactions.model");
+const Comment = require("../models/Comment_Reaction/comment.model");
+const CommentReaction = require("../models/Comment_Reaction/comment_reactions.model");
 
 //* Comment:
 // Tạo bình luận mới
@@ -8,7 +8,24 @@ const createComment = async (req, res) => {
     try {
         const { post_id, content, parent_comment_id } = req.body;
         const user_id = req.user._id;
-        const comment = await Comment.create({ user_id, post_id, content, parent_comment_id });
+
+        let media = undefined;
+        if (req.files && req.files.length > 0) {
+            const file = req.files[0];
+            media = {
+                url: file.path,
+                media_type: file.mimetype.startsWith("video") ? "video" : "image"
+            };
+        }
+
+        const comment = await Comment.create({
+            user_id,
+            post_id,
+            content,
+            parent_comment_id,
+            media
+        });
+
         res.status(201).json({ message: "Comment created", comment });
     } catch (err) {
         res.status(500).json({ error: err.message });

@@ -11,6 +11,16 @@ const storage = new CloudinaryStorage({
   }),
 });
 
-const upload = multer({ storage });
+const groupPostStorage = new CloudinaryStorage({
+  cloudinary,
+  params: async (req, file) => ({
+    folder: "group_posts",
+    resource_type: "auto",
+    public_id: `${Date.now()}-${file.originalname}`,
+  }),
+});
 
-module.exports = upload;
+const upload = multer({ storage });
+const uploadGroup = multer({ storage: groupPostStorage });
+
+module.exports = {upload, uploadGroup};

@@ -11,6 +11,11 @@ const postSchema = new mongoose.Schema(
     type: { type: String, enum: ["Public", "Private"], default: "Public" },
     is_deleted: { type: Boolean, default: false },
     deleted_at: { type: Date, default: null },
+    shared_post_id: { // Share pót 
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Post",
+      default: null
+    },
   },
   { timestamps: true }
 );

@@ -21,6 +21,10 @@ const commentSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    media: {
+      url: { type: String, required: false },
+      media_type: { type: String, enum: ["image", "video"], required: false }
+    },
     isDeleted: { type: Boolean, default: false },
     deleted_at: { type: Date, default: null },
   },
