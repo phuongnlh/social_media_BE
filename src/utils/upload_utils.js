@@ -11,6 +11,7 @@ const storage = new CloudinaryStorage({
   }),
 });
 
+
 const groupPostStorage = new CloudinaryStorage({
   cloudinary,
   params: async (req, file) => ({
@@ -20,7 +21,20 @@ const groupPostStorage = new CloudinaryStorage({
   }),
 });
 
+const uploadToCloudinary = async (base64Array) => {
+  const uploads = base64Array.map((base64) =>
+    cloudinary.uploader.upload(base64, {
+      resource_type: "auto",
+      folder: "chat_media",
+    })
+  );
+  return Promise.all(uploads);
+};
+
+
 const upload = multer({ storage });
 const uploadGroup = multer({ storage: groupPostStorage });
 
+
 module.exports = {upload, uploadGroup};
+module.exports.uploadToCloudinary = uploadToCloudinary;

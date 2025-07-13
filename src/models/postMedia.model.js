@@ -15,13 +15,14 @@ const postMediaSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: "GroupPost"
   },
+
   media_id: [
     {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Media",
       required: true,
     },
-  ]
+  ],
 });
 
 postMediaSchema.index({ post_id: 1, postgr_id: 1, media_id: 1 }, { unique: true });

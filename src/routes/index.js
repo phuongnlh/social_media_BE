@@ -5,6 +5,8 @@ const postRoutes = require("./post.route");
 const commentRoutes = require("./comment.route");
 const groupRoutes = require("./group.route");
 const groupPostRoutes = require("./group_post.route");
+const friendRoutes = require("./friend.route");
+const notificationRoutes = require("./notification.route");
 const router = express.Router();
 
 router.get("/", (req, res) => {
@@ -17,6 +19,7 @@ router.use("/post", postRoutes);
 router.use("/comment", commentRoutes);
 router.use("/group", groupRoutes);
 router.use("/group-post", groupPostRoutes);
-
+router.use("/", friendRoutes);
+router.use("/notifications", notificationRoutes);
 
 module.exports = router;

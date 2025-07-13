@@ -15,7 +15,7 @@ router.get("/trash", isLogin, postController.getTrashedPosts);
 router.post("/share", isLogin, postController.sharePost);
 router.post("/", isLogin, upload.array("media", 10), postController.createPost);
 router.get("/", isLogin, postController.getAllPostsbyUser);
-router.get("/:id",isLogin, postController.getPostById);
+router.get("/:id", isLogin, postController.getPostById);
 router.put("/:id", isLogin, postController.updatePost);
 router.delete("/:id", isLogin, postController.softDeletePost);
 router.patch("/:id/restore", isLogin, postController.restorePost);
