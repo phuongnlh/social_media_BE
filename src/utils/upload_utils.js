@@ -11,6 +11,7 @@ const storage = new CloudinaryStorage({
   }),
 });
 
+
 const uploadToCloudinary = async (base64Array) => {
   const uploads = base64Array.map((base64) =>
     cloudinary.uploader.upload(base64, {
@@ -21,7 +22,20 @@ const uploadToCloudinary = async (base64Array) => {
   return Promise.all(uploads);
 };
 
-const upload = multer({ storage });
+const groupPostStorage = new CloudinaryStorage({
+  cloudinary,
+  params: async (req, file) => ({
+    folder: "group_posts",
+    resource_type: "auto",
+    public_id: `${Date.now()}-${file.originalname}`,
+  }),
+});
 
-module.exports = upload;
+
+const upload = multer({ storage });
+const uploadGroup = multer({ storage: groupPostStorage });
+
+
 module.exports.uploadToCloudinary = uploadToCloudinary;
+module.exports = {upload, uploadGroup};
+
