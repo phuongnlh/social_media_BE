@@ -9,7 +9,9 @@ const sendFriendRequest = async (req, res) => {
   const { userId2 } = req.body;
 
   if (userId1.toString() === userId2)
-    return res.status(400).json({ message: "Không thể tự kết bạn với chính mình." });
+    return res
+      .status(400)
+      .json({ message: "Không thể tự kết bạn với chính mình." });
 
   try {
     // Kiểm tra xem đã có mối quan hệ bạn bè hoặc đã có lời mời trước đó
@@ -37,12 +39,12 @@ const sendFriendRequest = async (req, res) => {
     // Gửi thông báo đến người nhận lời mời
     try {
       const io = getSocketIO();
-      const userSocketMap = io._nsps.get('/').adapter.rooms;
-      
+      const userSocketMap = io._nsps.get("/").adapter.rooms;
+
       await notificationService.createNotification(
         io,
         userId2,
-        'friend_request',
+        "friend_request",
         `${sender.username} đã gửi cho bạn lời mời kết bạn`,
         userSocketMap
       );
@@ -67,23 +69,25 @@ const respondFriendRequest = async (req, res) => {
     // Tìm kiếm lời mời kết bạn và kiểm tra quyền
     const friendship = await Friendship.findById(friendshipId);
     if (!friendship || friendship.user_id_2.toString() !== userId.toString())
-      return res.status(404).json({ message: "Không tìm thấy lời mời kết bạn" });
+      return res
+        .status(404)
+        .json({ message: "Không tìm thấy lời mời kết bạn" });
 
     if (action === "accept") {
       // Chấp nhận lời mời kết bạn
       friendship.status = "accepted";
       friendship.accepted_at = new Date();
-      
+
       // Gửi thông báo đến người gửi lời mời rằng lời mời đã được chấp nhận
       try {
         const receiver = await User.findById(userId);
         const io = getSocketIO();
-        const userSocketMap = io._nsps.get('/').adapter.rooms;
-        
+        const userSocketMap = io._nsps.get("/").adapter.rooms;
+
         await notificationService.createNotification(
           io,
           friendship.user_id_1,
-          'friend_accepted',
+          "friend_accepted",
           `${receiver.username} đã chấp nhận lời mời kết bạn của bạn`,
           userSocketMap
         );
@@ -103,7 +107,16 @@ const respondFriendRequest = async (req, res) => {
 
     // Lưu thay đổi trạng thái
     await friendship.save();
-    res.json({ message: `Đã ${action === "accept" ? "chấp nhận" : action === "decline" ? "từ chối" : "chặn"} lời mời kết bạn`, friendship });
+    res.json({
+      message: `Đã ${
+        action === "accept"
+          ? "chấp nhận"
+          : action === "decline"
+          ? "từ chối"
+          : "chặn"
+      } lời mời kết bạn`,
+      friendship,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

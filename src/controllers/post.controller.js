@@ -71,13 +71,14 @@ const getPostById = async (req, res) => {
     // Tìm bài đăng theo ID
     const post = await Post.findById(postId).lean();
 
-    if (!post) return res.status(404).json({ message: "Không tìm thấy bài đăng" });
-    
+    if (!post)
+      return res.status(404).json({ message: "Không tìm thấy bài đăng" });
+
     // Kiểm tra nếu bài đăng đã bị xóa và người yêu cầu không phải tác giả
     if (post.isDeleted && post.user_id.toString() !== userId.toString()) {
       return res.status(410).json({ message: "Bài đăng đã bị xóa" });
     }
-    
+
     // Kiểm tra quyền truy cập nếu bài đăng ở chế độ riêng tư
     if (
       post.type === "Private" &&
@@ -85,7 +86,7 @@ const getPostById = async (req, res) => {
     ) {
       return res.status(403).json({ message: "Không có quyền truy cập" });
     }
-    
+
     // Lấy thông tin media của bài đăng
     const mediaLinks = await PostMedia.find({ post_id: post._id }).populate(
       "media_id"
@@ -115,7 +116,9 @@ const updatePost = async (req, res) => {
     if (!post)
       return res
         .status(404)
-        .json({ message: "Không tìm thấy bài đăng hoặc không có quyền chỉnh sửa" });
+        .json({
+          message: "Không tìm thấy bài đăng hoặc không có quyền chỉnh sửa",
+        });
 
     // Cập nhật nội dung và thời gian cập nhật
     post.content = content || post.content;
@@ -152,7 +155,8 @@ const softDeletePost = async (req, res) => {
     await post.save();
 
     res.json({
-      message: "Bài đăng đã được chuyển vào thùng rác. Sẽ bị xóa vĩnh viễn sau 7 ngày.",
+      message:
+        "Bài đăng đã được chuyển vào thùng rác. Sẽ bị xóa vĩnh viễn sau 7 ngày.",
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -174,7 +178,9 @@ const restorePost = async (req, res) => {
     if (!post)
       return res
         .status(404)
-        .json({ message: "Không tìm thấy bài đăng hoặc không nằm trong thùng rác" });
+        .json({
+          message: "Không tìm thấy bài đăng hoặc không nằm trong thùng rác",
+        });
 
     // Kiểm tra xem bài đăng có quá hạn khôi phục không (7 ngày)
     const now = new Date();

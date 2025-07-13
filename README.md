@@ -1040,6 +1040,7 @@ The application uses Socket.IO for real-time communication features.
 - **Data**: `string` (error message)
 
 #### Send Notification
+
 - **Event**: `send-notification`
 - **Data**:
   ```json
@@ -1051,6 +1052,7 @@ The application uses Socket.IO for real-time communication features.
   ```
 
 #### New Notification
+
 - **Event**: `new-notification`
 - **Data**:
   ```json
@@ -1065,6 +1067,7 @@ The application uses Socket.IO for real-time communication features.
   ```
 
 #### Notification Sent Confirmation
+
 - **Event**: `notification-sent`
 - **Data**:
   ```json
@@ -1082,6 +1085,7 @@ The application uses Socket.IO for real-time communication features.
   ```
 
 #### Mark Notification as Read
+
 - **Event**: `mark-notification-read`
 - **Data**:
   ```json
@@ -1091,10 +1095,12 @@ The application uses Socket.IO for real-time communication features.
   ```
 
 #### Notification Updated
+
 - **Event**: `notification-updated`
 - **Data**: Notification object with updated fields
 
 #### Mark All Notifications as Read
+
 - **Event**: `mark-all-notifications-read`
 - **Data**:
   ```json
@@ -1104,6 +1110,7 @@ The application uses Socket.IO for real-time communication features.
   ```
 
 #### All Notifications Updated
+
 - **Event**: `all-notifications-updated`
 - **Data**:
   ```json
@@ -1113,6 +1120,7 @@ The application uses Socket.IO for real-time communication features.
   ```
 
 #### Get Notifications
+
 - **Event**: `get-notifications`
 - **Data**:
   ```json
@@ -1122,14 +1130,17 @@ The application uses Socket.IO for real-time communication features.
   ```
 
 #### Notifications List
+
 - **Event**: `notifications-list`
 - **Data**: Array of notification objects
 
 #### Error Notification
+
 - **Event**: `error-notification`
 - **Data**: `string` (error message)
 
 #### Notifications Refresh Needed
+
 - **Event**: `notifications-refresh-needed`
 - **Description**: Notifies client to refresh notifications list
 

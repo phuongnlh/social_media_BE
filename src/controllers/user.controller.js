@@ -28,7 +28,9 @@ const registerUser = async (req, res) => {
 
     res
       .status(201)
-      .json({ message: "Tài khoản đã được tạo. Vui lòng xác thực email của bạn." });
+      .json({
+        message: "Tài khoản đã được tạo. Vui lòng xác thực email của bạn.",
+      });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
@@ -46,7 +48,9 @@ const verifyEmail = async (req, res) => {
       return res.status(404).json({ message: "Không tìm thấy người dùng" });
     }
     if (user.EmailVerified) {
-      return res.status(400).json({ message: "Email đã được xác thực trước đó" });
+      return res
+        .status(400)
+        .json({ message: "Email đã được xác thực trước đó" });
     }
     // Cập nhật trạng thái xác thực email
     user.EmailVerified = true;
@@ -64,17 +68,23 @@ const loginUser = async (req, res) => {
     // Tìm người dùng theo email
     const user = await User.findOne({ email: email });
     if (!user) {
-      return res.status(401).json({ message: "Email hoặc mật khẩu không hợp lệ!" });
+      return res
+        .status(401)
+        .json({ message: "Email hoặc mật khẩu không hợp lệ!" });
     }
 
     // Kiểm tra email đã được xác thực chưa
     if (!user.EmailVerified) {
-      return res.status(403).json({ message: "Vui lòng xác thực email của bạn." });
+      return res
+        .status(403)
+        .json({ message: "Vui lòng xác thực email của bạn." });
     }
 
     // Kiểm tra mật khẩu
     if (!validatePwd(password, user.hash, user.salt)) {
-      return res.status(401).json({ message: "Email hoặc mật khẩu không hợp lệ!" });
+      return res
+        .status(401)
+        .json({ message: "Email hoặc mật khẩu không hợp lệ!" });
     }
 
     // Tạo access token và refresh token
@@ -132,7 +142,7 @@ const logoutUser = async (req, res) => {
     multi.del(refreshKey); // Xóa key của token cụ thể
     multi.sRem(userRefreshTokensSet, refreshToken); // Xóa token khỏi Set các phiên
     await multi.exec();
-    
+
     // Xóa cookie refresh token
     res.clearCookie("refreshToken", { path: "/api/v1/" });
 
@@ -200,7 +210,8 @@ const changePassword = async (req, res) => {
 
     // Tìm người dùng theo ID
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user)
+      return res.status(404).json({ message: "Không tìm thấy người dùng" });
 
     // Kiểm tra mật khẩu cũ
     const isValid = validatePwd(oldPassword, user.hash, user.salt);
@@ -268,7 +279,8 @@ const resetPassword = async (req, res) => {
     // Tìm người dùng từ ID trong token
     const user = await User.findById(decoded.id);
 
-    if (!user) return res.status(400).json({ message: "Không tìm thấy người dùng" });
+    if (!user)
+      return res.status(400).json({ message: "Không tìm thấy người dùng" });
 
     // Tạo hash mới cho mật khẩu mới
     const { hash, salt } = genPwd(newPassword);
@@ -280,13 +292,13 @@ const resetPassword = async (req, res) => {
   } catch (err) {
     // Nếu lỗi là do token không hợp lệ hoặc hết hạn
     if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
-      return res.status(401).json({ message: "Token không hợp lệ hoặc đã hết hạn" });
+      return res
+        .status(401)
+        .json({ message: "Token không hợp lệ hoặc đã hết hạn" });
     }
     // Các lỗi khác là lỗi server
     console.error(err); // Ghi lại lỗi để debug
-    return res
-      .status(500)
-      .json({ message: "Đã xảy ra lỗi từ máy chủ." });
+    return res.status(500).json({ message: "Đã xảy ra lỗi từ máy chủ." });
   }
 };
 

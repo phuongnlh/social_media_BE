@@ -16,7 +16,7 @@ const setSocketIO = (socketIO, socketMap) => {
 // Lấy instance Socket.IO
 const getSocketIO = () => {
   if (!io) {
-    throw new Error('Socket.IO instance chưa được khởi tạo');
+    throw new Error("Socket.IO instance chưa được khởi tạo");
   }
   return io;
 };
@@ -29,5 +29,5 @@ const getUserSocketMap = () => {
 module.exports = {
   setSocketIO,
   getSocketIO,
-  getUserSocketMap
+  getUserSocketMap,
 };

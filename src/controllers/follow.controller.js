@@ -17,24 +17,25 @@ const followUser = async (req, res) => {
       follower_id: followerId,
       following_id: followingId,
     });
-    if (existing) return res.status(409).json({ message: "Đã theo dõi người dùng này" });
+    if (existing)
+      return res.status(409).json({ message: "Đã theo dõi người dùng này" });
 
     // Tạo bản ghi theo dõi mới
     const follow = await Follower.create({
       follower_id: followerId,
       following_id: followingId,
     });
-    
+
     // Gửi thông báo đến người được theo dõi
     try {
       const follower = await User.findById(followerId);
       const io = getSocketIO();
       const userSocketMap = getUserSocketMap();
-      
+
       await notificationService.createNotification(
         io,
         followingId,
-        'follow',
+        "follow",
         `${follower.username} đã bắt đầu theo dõi bạn`,
         userSocketMap
       );
@@ -42,7 +43,7 @@ const followUser = async (req, res) => {
       console.error("Không thể gửi thông báo theo dõi:", notifyErr);
       // Tiếp tục thực thi ngay cả khi gửi thông báo thất bại
     }
-    
+
     res.status(201).json({ message: "Đã theo dõi", follow });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -60,7 +61,8 @@ const unfollowUser = async (req, res) => {
       follower_id: followerId,
       following_id: followingId,
     });
-    if (!deleted) return res.status(404).json({ message: "Chưa theo dõi người dùng này" });
+    if (!deleted)
+      return res.status(404).json({ message: "Chưa theo dõi người dùng này" });
 
     res.json({ message: "Đã hủy theo dõi" });
   } catch (err) {

@@ -78,20 +78,20 @@ module.exports = (io) => {
         }
       }
     });
-    
+
     // Xử lý gửi thông báo
     socket.on("send-notification", async (data) => {
       try {
         const { userId, type, content } = data;
-        
+
         const notification = await notificationService.createNotification(
-          io, 
-          userId, 
-          type, 
-          content, 
+          io,
+          userId,
+          type,
+          content,
           userSocketMap
         );
-        
+
         // Xác nhận thông báo đã được gửi
         socket.emit("notification-sent", { success: true, notification });
       } catch (err) {
@@ -99,14 +99,16 @@ module.exports = (io) => {
         socket.emit("error-notification", "Gửi thông báo thất bại.");
       }
     });
-    
+
     // Đánh dấu thông báo đã đọc
     socket.on("mark-notification-read", async (data) => {
       try {
         const { notificationId } = data;
-        
-        const notification = await notificationService.markAsRead(notificationId);
-        
+
+        const notification = await notificationService.markAsRead(
+          notificationId
+        );
+
         if (notification) {
           socket.emit("notification-updated", notification);
         } else {
@@ -117,38 +119,44 @@ module.exports = (io) => {
         socket.emit("error-notification", "Không thể cập nhật thông báo");
       }
     });
-    
+
     // Đánh dấu tất cả thông báo đã đọc
     socket.on("mark-all-notifications-read", async (data) => {
       try {
         const { userId } = data;
-        
+
         await notificationService.markAllAsRead(userId);
-        
+
         socket.emit("all-notifications-updated", { success: true });
-        
+
         // Thông báo cho tất cả thiết bị đang kết nối của người dùng
         const userSocketIds = userSocketMap.get(userId.toString());
         if (userSocketIds) {
           for (const socketId of userSocketIds) {
-            if (socketId !== socket.id) { // Không gửi cho socket hiện tại
+            if (socketId !== socket.id) {
+              // Không gửi cho socket hiện tại
               io.to(socketId).emit("notifications-refresh-needed");
             }
           }
         }
       } catch (err) {
         console.error("Mark all notifications error:", err);
-        socket.emit("error-notification", "Không thể cập nhật tất cả thông báo");
+        socket.emit(
+          "error-notification",
+          "Không thể cập nhật tất cả thông báo"
+        );
       }
     });
-    
+
     // Lấy danh sách thông báo chưa đọc của người dùng
     socket.on("get-notifications", async (data) => {
       try {
         const { userId } = data;
-        
-        const notifications = await notificationService.getUnreadNotifications(userId);
-        
+
+        const notifications = await notificationService.getUnreadNotifications(
+          userId
+        );
+
         socket.emit("notifications-list", notifications);
       } catch (err) {
         console.error("Get notifications error:", err);

@@ -1,6 +1,11 @@
 const mongoose = require("mongoose");
 
 const postMediaSchema = new mongoose.Schema({
+  type: {
+    type: String,
+    enum: ["post", "post_group"],
+    required: true,
+  },
   post_id: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Post",

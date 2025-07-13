@@ -9,9 +9,9 @@ const createNotification = async (io, userId, type, content, userSocketMap) => {
       user_id: userId,
       type,
       content,
-      is_read: false
+      is_read: false,
     });
-    
+
     // Gửi thông báo đến tất cả thiết bị đang kết nối của người dùng
     const userSocketIds = userSocketMap.get(userId.toString());
     if (userSocketIds) {
@@ -19,7 +19,7 @@ const createNotification = async (io, userId, type, content, userSocketMap) => {
         io.to(socketId).emit("new-notification", notification);
       }
     }
-    
+
     return notification;
   } catch (error) {
     console.error("Error creating notification:", error);
@@ -31,9 +31,9 @@ const createNotification = async (io, userId, type, content, userSocketMap) => {
 // userId: ID của người dùng
 const getUnreadNotifications = async (userId) => {
   try {
-    return await Notification.find({ 
-      user_id: userId, 
-      is_read: false 
+    return await Notification.find({
+      user_id: userId,
+      is_read: false,
     }).sort({ createdAt: -1 });
   } catch (error) {
     console.error("Error getting unread notifications:", error);
@@ -74,5 +74,5 @@ module.exports = {
   createNotification,
   getUnreadNotifications,
   markAsRead,
-  markAllAsRead
+  markAllAsRead,
 };
