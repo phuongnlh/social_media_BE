@@ -1,16 +1,31 @@
 require("dotenv").config();
+const http = require("http");
+const { Server } = require("socket.io");
+
 const app = require("./app");
 const connDB = require("./config/database.mongo");
 const redisClient = require("./config/database.redis");
-// const seedAdmin = require("./config/seed");
+
+// Tạo HTTP server từ app Express
+const server = http.createServer(app);
+
+// Tạo socket server
+const io = new Server(server, {
+  cors: {
+    origin: "http://localhost:5173", // Hoặc domain FE bạn dùng
+    methods: ["GET", "POST"],
+  },
+});
+
+// Import logic Socket.IO (nếu có)
+require("./socket")(io); // bạn có thể tạo file socket/index.js để gọn
 
 (async () => {
   try {
-    // Kết nối MongoDB
     await connDB();
 
     const PORT = process.env.PORT || 3000;
-    app.listen(PORT, () => {
+    server.listen(PORT, () => {
       console.log(`✅ Server is running on http://localhost:${PORT}`);
     });
   } catch (err) {
