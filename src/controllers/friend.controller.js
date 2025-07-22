@@ -140,8 +140,7 @@ const getFriendsList = async (req, res) => {
       const isSender = f.user_id_1._id.toString() === userId.toString();
       return isSender ? f.user_id_2 : f.user_id_1;
     });
-    console.log("Friends List:", result);
-    res.json(result);
+    res.status(200).json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -177,7 +176,7 @@ const getUnfriendedUsers = async (req, res) => {
 
     // Lấy danh sách id đã kết bạn hoặc có lời mời
     const friendIds = new Set();
-    friendships.forEach(f => {
+    friendships.forEach((f) => {
       friendIds.add(f.user_id_1.toString());
       friendIds.add(f.user_id_2.toString());
     });
@@ -196,27 +195,29 @@ const getUnfriendedUsers = async (req, res) => {
       $or: [{ user_id_1: userId }, { user_id_2: userId }],
     });
 
-    const myFriendIds = myFriends.map(f =>
+    const myFriendIds = myFriends.map((f) =>
       f.user_id_1.toString() === userId.toString()
-      ? f.user_id_2.toString()
-      : f.user_id_1.toString()
+        ? f.user_id_2.toString()
+        : f.user_id_1.toString()
     );
 
     // Tính số lượng bạn chung cho từng user chưa kết bạn
     for (const user of unfriendedUsers) {
       const theirFriends = await Friendship.find({
-      status: "accepted",
-      $or: [{ user_id_1: user._id }, { user_id_2: user._id }],
+        status: "accepted",
+        $or: [{ user_id_1: user._id }, { user_id_2: user._id }],
       });
 
-      const theirFriendIds = theirFriends.map(f =>
-      f.user_id_1.toString() === user._id.toString()
-        ? f.user_id_2.toString()
-        : f.user_id_1.toString()
+      const theirFriendIds = theirFriends.map((f) =>
+        f.user_id_1.toString() === user._id.toString()
+          ? f.user_id_2.toString()
+          : f.user_id_1.toString()
       );
 
       // Đếm số lượng bạn chung
-      user.mutualFriends = myFriendIds.filter(id => theirFriendIds.includes(id)).length;
+      user.mutualFriends = myFriendIds.filter((id) =>
+        theirFriendIds.includes(id)
+      ).length;
     }
 
     res.json(unfriendedUsers);
