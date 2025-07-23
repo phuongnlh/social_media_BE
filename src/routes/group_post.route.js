@@ -7,11 +7,12 @@ const { isLogin } = require("../middlewares/auth");
 
 router.post("/reaction", isLogin, groupPostController.reactToGroupPost); // Tạo hoặc cập nhật reaction của user với group post
 router.delete("/reaction", isLogin, groupPostController.removeGroupPostReaction); // Xoá reaction của user với group post
-router.post("/reactions/user", isLogin, groupPostController.getUserReactionsForGroupPosts); // Lấy reaction của user với nhiều group post (có thể truyền 1 hoặc nhiều postgr_ids)
+router.post("/user-reactions", isLogin, groupPostController.getUserReactionsForGroupPosts); // Lấy reaction của user với nhiều group post (có thể truyền 1 hoặc nhiều postgr_ids)
 
 router.post("/share", isLogin, groupPostController.shareGroupPostToWall); // Chia sẻ bài viết trong group lên tường cá nhân
+router.get("/reactions/:postgr_id", isLogin, groupPostController.getReactionsOfGroupPost); // Lấy tất cả reaction của group post
 router.patch("/:post_id/restore", isLogin, groupPostController.restoreGroupPost); // Khôi phục bài viết đã xoá
-router.get("/:postgr_id/reactions", isLogin, groupPostController.getReactionsOfGroupPost); // Lấy tất cả reaction của group post
+
 //Dành cho quản trị viên của group
 router.get("/:group_id/pending", isLogin, groupPostController.getPendingPostsInGroup); // Lấy danh sách bài viết chờ duyệt trong group
 router.post("/:post_id/approve", isLogin, groupPostController.approveGroupPost); // Duyệt bài viết trong group

@@ -13,6 +13,7 @@ router.post("/user-reactions", isLogin, interactController.getUserReactionsForCo
 
 // Comments of Post
 router.put("/restore/:comment_id", isLogin, interactController.restoreComment);
+router.get("/group-post/:postgr_id", interactController.getCommentsOfPost);
 router.post("/", isLogin,upload.array("media",1), interactController.createComment);
 router.get("/:post_id", interactController.getCommentsOfPost);
 router.put("/:comment_id", isLogin, interactController.editComment);

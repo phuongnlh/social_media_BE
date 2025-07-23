@@ -68,11 +68,15 @@ const requestJoinGroup = async (req, res) => {
         if (!group) return res.status(404).json({ error: "Group not found" });
 
         // Kiểm tra đã là thành viên chưa
-        const isMember = await GroupMember.findOne({ group: group_id, user: user_id, status: "approved" });
+        const isMember = await GroupMember.findOne({ group: group_id, user: user_id, status: "approved", is_banned: false });
         if (isMember) {
             return res.status(400).json({ error: "Already a member of this group" });
         }
 
+        const isBanned = await GroupMember.findOne({ group: group_id, user: user_id, status: "banned" });
+        if (isBanned) {
+            return res.status(403).json({error: "You are banned from this group, can't join again."});
+        }
         // Kiểm tra đã gửi request chưa
         const existingRequest = await GroupRequest.findOne({ group_id, user_id, status: "pending" });
         if (existingRequest) {
@@ -266,6 +270,117 @@ const deleteGroup = async (req, res) => {
     }
 };
 
+// Ban thành viên khỏi nhóm (chỉ admin)
+const banMember = async (req, res) => {
+    try {
+        const { group_id, user_id, ban_reason } = req.body;
+        const admin_id = req.user._id;
+        const isAdmin = await isGroupAdmin(group_id, admin_id);
+        if (!isAdmin) return res.status(403).json({ error: "Permission denied" });
+
+        const member = await GroupMember.findOneAndUpdate(
+            { group: group_id, user: user_id },
+            {
+                status: "banned",
+                banned_at: new Date(),
+                ban_reason: ban_reason || null,
+                is_removed: true,
+            },
+            { new: true }
+        );
+        if (!member) return res.status(404).json({ error: "Member not found" });
+        res.status(200).json({ message: "Member banned", member });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+// Gỡ Ban thành viên (chỉ admin)
+const unbanMember = async (req, res) => {
+    try {
+        const { group_id, user_id } = req.body;
+        const admin_id = req.user._id;
+        const isAdmin = await isGroupAdmin(group_id, admin_id);
+        if (!isAdmin) return res.status(403).json({ error: "Permission denied" });
+
+        const member = await GroupMember.findOneAndDelete({
+            group: group_id,
+            user: user_id,
+            status: "banned",
+            is_removed: true
+        });
+        if (!member) return res.status(404).json({ error: "Member not found" });
+        res.status(200).json({ message: "Member unbanned", member });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+//Hạn chế thành viên đăng bài
+const restrictMember = async (req, res) => {
+    try {
+        const { group_id, user_id, days, restrict_reason } = req.body;
+        const admin_id = req.user._id
+        const isAdmin = await isGroupAdmin(group_id, admin_id);
+        if (!isAdmin) return res.status(403).json({ error: "Pemission denied" })
+        if (!days || days <= 0) return res.status(400).json({ error: "Invalid days" })
+
+        const until = new Date()
+        until.setDate(until.getDate() + days)
+
+        const member = await GroupMember.findOneAndUpdate(
+            { group: group_id, user: user_id, status: "banned" },
+            {
+                restrict_post_until: until,
+                restrict_reason: restrict_reason || null
+            },
+            { new: true }
+        );
+        if (!member) return res.status(404).json({ error: "Member not found" })
+        res.status(200).json({ message: "Member restricted from posting", member })
+    } catch (error) {
+        res.status(500).json({ error: err.message });
+    }
+}
+
+//Lấy danh sách thành viên bị hạn chế
+const getRestrictMemberList = async (req, res) => {
+    try {
+        const { group_id } = req.params
+        admin_id = req.user._id
+        const isAdmin = await isGroupAdmin(group_id, admin_id);
+        if (!isAdmin) return res.status(403).json({ error: "Pemission denied" })
+
+        const members = await GroupMember.find({
+            group: group_id,
+            restrict_post_until: { $ne: null },
+            status: "approved",
+        }).populate("user", "username avatar_url")
+        res.status(200).json({ members })
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+}
+
+// Lấy danh sách thành viên bị ban
+const getbannedMemberList = async (req, res) => {
+    try {
+        const { group_id } = req.params
+        admin_id = req.user._id
+        const isAdmin = await isGroupAdmin(group_id, admin_id);
+        if (!isAdmin) return res.status(403).json({ error: "Pemission denied" })
+
+        const members = await GroupMember.find({
+            group: group_id,
+            status: "banned",
+            is_removed: true
+        }).populate("user", "username avatar_url")
+        res.status(200).json({ members })
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+}
+
 
 
 
@@ -281,5 +396,10 @@ module.exports = {
     getGroupMembers,
     changeMemberRole,
     updateGroup,
-    deleteGroup
+    deleteGroup,
+    banMember,
+    unbanMember,
+    restrictMember,
+    getRestrictMemberList,
+    getbannedMemberList
 };

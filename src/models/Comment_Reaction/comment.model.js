@@ -10,7 +10,12 @@ const commentSchema = new mongoose.Schema(
     post_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Post",
-      required: true,
+      required: false,
+    },
+    postgr_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "GroupPost",
+      required: false,
     },
     parent_comment_id: {
       type: mongoose.Schema.Types.ObjectId,

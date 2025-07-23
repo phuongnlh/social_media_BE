@@ -6,8 +6,13 @@ const CommentReaction = require("../models/Comment_Reaction/comment_reactions.mo
 // Tạo bình luận mới
 const createComment = async (req, res) => {
     try {
-        const { post_id, content, parent_comment_id } = req.body;
+        const { post_id, postgr_id, content, parent_comment_id } = req.body;
         const user_id = req.user._id;
+
+        // Chỉ nhận 1 trong 2: post_id hoặc postgr_id
+        if (!post_id && !postgr_id) {
+            return res.status(400).json({ error: "Must provide post_id or postgr_id" });
+        }
 
         let media = undefined;
         if (req.files && req.files.length > 0) {
@@ -21,6 +26,7 @@ const createComment = async (req, res) => {
         const comment = await Comment.create({
             user_id,
             post_id,
+            postgr_id,
             content,
             parent_comment_id,
             media
@@ -36,7 +42,11 @@ const createComment = async (req, res) => {
 //TODO Phân cấp tạm thời (sau này cải tiến lại)
 const getCommentsOfPost = async (req, res) => {
     try {
-        const { post_id } = req.params;
+        const { post_id,postgr_id } = req.params;
+
+        let filter = { isDeleted: false };
+        if (post_id) filter.post_id = post_id;
+        if (postgr_id) filter.postgr_id = postgr_id;
 
         // Lấy tất cả comment của post
         const comments = await Comment.find({ post_id, isDeleted: false })

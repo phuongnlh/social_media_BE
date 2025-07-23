@@ -27,7 +27,17 @@ const createGroupPost = async (req, res) => {
         // Kiểm tra user là thành viên group
         const member = await GroupMember.findOne({ group: group_id, user: user_id, status: "approved" });
         if (!member) return res.status(403).json({ error: "Bạn không phải thành viên nhóm này." });
-
+        
+        // Kiểm tra hạn chế đăng bài
+        if (
+            member.restrict_post_until &&
+            new Date(member.restrict_post_until) > new Date()
+        ) {
+            return res.status(403).json({
+                error: "Bạn đang bị hạn chế đăng bài đến " + member.restrict_post_until,
+                restrict_reason: member.restrict_reason
+            });
+        }
         // Lấy group để kiểm tra post_approval
         const group = await Group.findById(group_id);
         if (!group) return res.status(404).json({ error: "Group not found" });
@@ -254,7 +264,7 @@ const shareGroupPostToWall = async (req, res) => {
 const approveGroupPost = async (req, res) => {
     try {
         const { post_id } = req.params;
-        const { action } = req.body; // "approve" hoặc "reject"
+        const { action,violation } = req.body; // "approve" hoặc "reject" || violation : true/false (Đánh dấu vi phạm nếu reject)
         const admin_id = req.user._id;
 
         // Tìm bài viết
@@ -281,6 +291,14 @@ const approveGroupPost = async (req, res) => {
             post.status = "rejected";
             post.approved_by = admin_id;
             post.approved_at = new Date();
+
+            if (violation === "true") {
+                await GroupMember.findOneAndUpdate(
+                    { group: post.group_id, user: post.user_id },
+                    { $inc: { count_violations: 1 } }
+                );
+            }
+
         } else {
             return res.status(400).json({ message: "Invalid action" });
         }
@@ -332,6 +350,7 @@ const getPendingPostsInGroup = async (req, res) => {
     }
 };
 
+//* Reaction of Post:
 // Tạo hoặc cập nhật reaction cho group post
 const reactToGroupPost = async (req, res) => {
     try {
