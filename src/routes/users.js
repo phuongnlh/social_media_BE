@@ -13,6 +13,8 @@ router.post("/change-password", isLogin, UserController.changePassword);
 router.post("/forgot-password", UserController.forgotPassword);
 router.post("/reset-password", UserController.resetPassword);
 
+router.get("/baseUser", isLogin, UserController.getUser);
+
 router.get("/", isLogin, (req, res) => {
   res.json(req.user);
 });

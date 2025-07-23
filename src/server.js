@@ -12,7 +12,7 @@ const server = http.createServer(app);
 // Tạo socket server
 const io = new Server(server, {
   cors: {
-    origin: "*", // Hoặc domain FE bạn dùng
+    origin: "http://localhost:5173", // Hoặc domain FE bạn dùng
     methods: ["GET", "POST"],
   },
 });

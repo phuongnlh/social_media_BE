@@ -1,6 +1,7 @@
 const multer = require("multer");
 const { CloudinaryStorage } = require("multer-storage-cloudinary");
 const cloudinary = require("../config/cloudinary.storage");
+const streamifier = require("streamifier");
 
 const storage = new CloudinaryStorage({
   cloudinary,
@@ -11,7 +12,6 @@ const storage = new CloudinaryStorage({
   }),
 });
 
-
 const groupPostStorage = new CloudinaryStorage({
   cloudinary,
   params: async (req, file) => ({
@@ -21,20 +21,36 @@ const groupPostStorage = new CloudinaryStorage({
   }),
 });
 
-const uploadToCloudinary = async (base64Array) => {
-  const uploads = base64Array.map((base64) =>
-    cloudinary.uploader.upload(base64, {
-      resource_type: "auto",
-      folder: "chat_media",
+const uploadToCloudinary = (buffers) => {
+  // Hàm này giờ trả về một Promise chứa mảng các kết quả upload
+  return Promise.all(
+    buffers.map((buffer) => {
+      return new Promise((resolve, reject) => {
+        // Tạo một stream upload lên Cloudinary
+        const uploadStream = cloudinary.uploader.upload_stream(
+          {
+            // Tùy chọn: bạn có thể thêm folder, tag... ở đây
+            folder: "chat_media",
+          },
+          (error, result) => {
+            if (error) {
+              // Nếu có lỗi, reject Promise
+              return reject(error);
+            }
+            // Nếu thành công, resolve Promise với kết quả
+            resolve(result);
+          }
+        );
+
+        // Chuyển buffer thành stream và pipe vào stream upload của Cloudinary
+        streamifier.createReadStream(buffer).pipe(uploadStream);
+      });
     })
   );
-  return Promise.all(uploads);
 };
-
 
 const upload = multer({ storage });
 const uploadGroup = multer({ storage: groupPostStorage });
 
-
-module.exports = {upload, uploadGroup};
+module.exports = { upload, uploadGroup };
 module.exports.uploadToCloudinary = uploadToCloudinary;
