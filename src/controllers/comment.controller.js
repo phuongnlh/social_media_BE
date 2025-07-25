@@ -1,6 +1,11 @@
 const mongoose = require("mongoose");
 const Comment = require("../models/Comment_Reaction/comment.model");
 const CommentReaction = require("../models/Comment_Reaction/comment_reactions.model");
+const Post = require("../models/post.model");
+const GroupPost = require("../models/Group/group_post.model");
+const User = require("../models/user.model");
+const notificationService = require("../services/notification.service");
+const { getSocketIO, getUserSocketMap } = require("../socket/io-instance");
 
 //* Comment:
 // Tạo bình luận mới
@@ -32,6 +37,58 @@ const createComment = async (req, res) => {
             media
         });
 
+        // Gửi thông báo
+        try {
+            const io = getSocketIO();
+            const userSocketMap = getUserSocketMap();
+            const commenter = await User.findById(user_id);
+
+            // 1. Reply comment: gửi cho chủ comment được reply (nếu không phải là mình)
+            if (parent_comment_id) {
+                const parentComment = await Comment.findById(parent_comment_id);
+                if (parentComment && parentComment.user_id.toString() !== user_id.toString()) {
+                    await notificationService.createNotification(
+                        io,
+                        parentComment.user_id,
+                        "reply_comment",
+                        `${commenter.username} đã trả lời bình luận của bạn`,
+                        userSocketMap
+                    );
+                }
+            } else {
+                // 2. Bình luận vào post cá nhân
+                if (post_id) {
+                    const post = await Post.findById(post_id);
+                    if (post && post.user_id.toString() !== user_id.toString()) {
+                        await notificationService.createNotification(
+                            io,
+                            post.user_id,
+                            "comment",
+                            `${commenter.username} đã bình luận vào bài viết của bạn`,
+                            userSocketMap
+                        );
+                    }
+                }
+                // 3. Bình luận vào post group
+                else if (postgr_id) {
+                    const groupPost = await GroupPost.findById(postgr_id);
+                    if (groupPost && groupPost.user_id.toString() !== user_id.toString()) {
+                        const group = await Group.findById(groupPost.group_id);
+                        const groupName = group ? group.name : "nhóm";
+                        await notificationService.createNotification(
+                            io,
+                            groupPost.user_id,
+                            "comment",
+                            `${commenter.username} đã bình luận vào bài viết của bạn trong nhóm ${groupName}`,
+                            userSocketMap
+                        );
+                    }
+                }
+            }
+        } catch (notifyErr) {
+            console.error("Không thể gửi thông báo bình luận:", notifyErr);
+        }
+
         res.status(201).json({ message: "Comment created", comment });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -42,7 +99,7 @@ const createComment = async (req, res) => {
 //TODO Phân cấp tạm thời (sau này cải tiến lại)
 const getCommentsOfPost = async (req, res) => {
     try {
-        const { post_id,postgr_id } = req.params;
+        const { post_id, postgr_id } = req.params;
 
         let filter = { isDeleted: false };
         if (post_id) filter.post_id = post_id;
@@ -150,6 +207,39 @@ const reactToComment = async (req, res) => {
             { type: type || "like" },
             { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true }
         );
+        try {
+            const comment = await Comment.findById(comment_id);
+            if (comment && comment.user_id.toString() !== user_id.toString()) {
+                // Lấy danh sách user đã react (trừ chủ comment)
+                const reactions = await CommentReaction.find({ comment_id })
+                    .populate("user_id", "username");
+                // Lọc ra user react khác chủ comment
+                const otherReactUsers = reactions.filter(
+                    r => r.user_id && r.user_id._id.toString() !== comment.user_id.toString()
+                );
+                if (otherReactUsers.length > 0) {
+                    const currentUser = otherReactUsers.find(r => r.user_id._id.toString() === user_id.toString());
+                    const otherCount = otherReactUsers.length - 1;
+                    let contentNoti = "";
+                    if (otherCount > 0) {
+                        contentNoti = `${currentUser.user_id.username} và ${otherCount} người khác đã bày tỏ cảm xúc bình luận của bạn`;
+                    } else {
+                        contentNoti = `${currentUser.user_id.username} đã bày tỏ cảm xúc bình luận của bạn`;
+                    }
+                    const io = getSocketIO();
+                    const userSocketMap = getUserSocketMap();
+                    await notificationService.createNotification(
+                        io,
+                        comment.user_id,
+                        "comment_reaction",
+                        contentNoti,
+                        userSocketMap
+                    );
+                }
+            }
+        } catch (notifyErr) {
+            console.error("Không thể gửi thông báo reaction bình luận:", notifyErr);
+        }
         res.status(200).json({ message: "Comment reaction saved", reaction });
     } catch (err) {
         res.status(500).json({ error: err.message });

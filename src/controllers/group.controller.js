@@ -1,6 +1,8 @@
 const Group = require("../models/Group/group.model");
 const GroupMember = require("../models/Group/group_member.model");
 const GroupRequest = require("../models/Group/group_request.model");
+const notificationService = require("../services/notification.service");
+const { getSocketIO, getUserSocketMap } = require("../socket/io-instance");
 
 // Hàm kiểm tra quyền admin trong group
 const isGroupAdmin = async (group_id, user_id) => {
@@ -72,10 +74,10 @@ const requestJoinGroup = async (req, res) => {
         if (isMember) {
             return res.status(400).json({ error: "Already a member of this group" });
         }
-
+        // Kiểm tra đã bị ban chưa
         const isBanned = await GroupMember.findOne({ group: group_id, user: user_id, status: "banned" });
         if (isBanned) {
-            return res.status(403).json({error: "You are banned from this group, can't join again."});
+            return res.status(403).json({ error: "You are banned from this group, can't join again." });
         }
         // Kiểm tra đã gửi request chưa
         const existingRequest = await GroupRequest.findOne({ group_id, user_id, status: "pending" });
@@ -175,6 +177,22 @@ const handleJoinRequest = async (req, res) => {
                 role: "member",
                 status: "approved"
             });
+
+            // Gửi thông báo cho người dùng
+            try {
+                const io = getSocketIO();
+                const userSocketMap = getUserSocketMap();
+                const group = await Group.findById(request.group_id);
+                await notificationService.createNotification(
+                    io,
+                    request.user_id,
+                    "group_join_approved",
+                    `Yêu cầu tham gia nhóm "${group.name}" của bạn đã được duyệt.`,
+                    userSocketMap
+                );
+            } catch (notifyErr) {
+                console.error("Không thể gửi thông báo duyệt nhóm:", notifyErr);
+            }
         }
         res.status(200).json({ message: `Request ${action}` });
     } catch (err) {
@@ -289,6 +307,23 @@ const banMember = async (req, res) => {
             { new: true }
         );
         if (!member) return res.status(404).json({ error: "Member not found" });
+
+        // Gửi thông báo cho user bị ban
+        try {
+            const io = getSocketIO();
+            const userSocketMap = getUserSocketMap();
+            const group = await Group.findById(group_id);
+            await notificationService.createNotification(
+                io,
+                user_id,
+                "group_banned",
+                `Bạn đã bị cấm khỏi nhóm "${group.name}".${ban_reason ? " Lý do: " + ban_reason : ""}`,
+                userSocketMap
+            );
+        } catch (notifyErr) {
+            console.error("Không thể gửi thông báo ban nhóm:", notifyErr);
+        }
+
         res.status(200).json({ message: "Member banned", member });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -336,7 +371,24 @@ const restrictMember = async (req, res) => {
             },
             { new: true }
         );
+
         if (!member) return res.status(404).json({ error: "Member not found" })
+        // Gửi thông báo cho user bị hạn chế
+
+        try {
+            const io = getSocketIO();
+            const userSocketMap = getUserSocketMap();
+            const group = await Group.findById(group_id);
+            await notificationService.createNotification(
+                io,
+                user_id,
+                "group_restricted",
+                `Bạn đã bị hạn chế đăng bài trong nhóm "${group.name}".${restrict_reason ? " Lý do: " + restrict_reason : ""}`,
+                userSocketMap
+            );
+        } catch (notifyErr) {
+            console.error("Không thể gửi thông báo hạn chế nhóm:", notifyErr);
+        }
         res.status(200).json({ message: "Member restricted from posting", member })
     } catch (error) {
         res.status(500).json({ error: err.message });

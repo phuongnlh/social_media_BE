@@ -6,6 +6,9 @@ const GroupMember = require("../models/Group/group_member.model");
 const Post = require("../models/post.model");
 const PostReaction = require("../models/Comment_Reaction/post_reaction.model");
 const mongoose = require("mongoose");
+const User = require("../models/user.model");
+const notificationService = require("../services/notification.service");
+const { getSocketIO, getUserSocketMap } = require("../socket/io-instance");
 
 // Hàm kiểm tra quyền admin trong group
 const isGroupAdmin = async (group_id, user_id) => {
@@ -27,7 +30,7 @@ const createGroupPost = async (req, res) => {
         // Kiểm tra user là thành viên group
         const member = await GroupMember.findOne({ group: group_id, user: user_id, status: "approved" });
         if (!member) return res.status(403).json({ error: "Bạn không phải thành viên nhóm này." });
-        
+
         // Kiểm tra hạn chế đăng bài
         if (
             member.restrict_post_until &&
@@ -247,6 +250,25 @@ const shareGroupPostToWall = async (req, res) => {
                 type: type || "Public",
                 shared_post_id: group_post_id, // trỏ tới GroupPost
             });
+
+            // Gửi thông báo cho chủ post group
+            try {
+                // kiểm tra xem người dùng có phải là chủ bài viết không
+                if (groupPost.user_id.toString() !== userId.toString()) {
+                    const io = getSocketIO();
+                    const userSocketMap = getUserSocketMap();
+                    const sharer = await User.findById(userId);
+                    await notificationService.createNotification(
+                        io,
+                        groupPost.user_id,
+                        "group_post_shared",
+                        `${sharer.username} đã chia sẻ bài viết của bạn trong nhóm "${group.name}".`,
+                        userSocketMap
+                    );
+                }
+            } catch (error) {
+                console.error("Không thể gửi thông báo share group post:", error);
+            }
             return res.status(201).json({ message: "Shared group post to wall", postId: sharedPost._id });
         }
 
@@ -264,7 +286,7 @@ const shareGroupPostToWall = async (req, res) => {
 const approveGroupPost = async (req, res) => {
     try {
         const { post_id } = req.params;
-        const { action,violation } = req.body; // "approve" hoặc "reject" || violation : true/false (Đánh dấu vi phạm nếu reject)
+        const { action, violation } = req.body; // "approve" hoặc "reject" || violation : true/false (Đánh dấu vi phạm nếu reject)
         const admin_id = req.user._id;
 
         // Tìm bài viết
@@ -282,21 +304,30 @@ const approveGroupPost = async (req, res) => {
         if (post.status !== "pending") {
             return res.status(400).json({ message: "Post is not pending approval" });
         }
+        let notiContent = "";
+        let notiType = "";
+        const group = await Group.findById(post.group_id);
+        const groupName = group.name;
 
         if (action === "approve") {
             post.status = "approved";
             post.approved_by = admin_id;
             post.approved_at = new Date();
+            notiType = "group_post_approved";
+            notiContent = `Bài viết của bạn trong nhóm "${groupName}" đã được duyệt.`;
         } else if (action === "reject") {
             post.status = "rejected";
             post.approved_by = admin_id;
             post.approved_at = new Date();
+            notiType = "group_post_rejected";
+            notiContent = `Bài viết của bạn trong nhóm "${groupName}" đã bị từ chối.`;
 
             if (violation === "true") {
                 await GroupMember.findOneAndUpdate(
                     { group: post.group_id, user: post.user_id },
                     { $inc: { count_violations: 1 } }
                 );
+                notiContent += " Bài viết bị đánh dấu vi phạm.";
             }
 
         } else {
@@ -304,6 +335,22 @@ const approveGroupPost = async (req, res) => {
         }
 
         await post.save();
+
+        // Gửi thông báo cho user
+        try {
+            const io = getSocketIO();
+            const userSocketMap = getUserSocketMap();
+            const group = await Group.findById(post.group_id);
+            await notificationService.createNotification(
+                io,
+                post.user_id,
+                notiType,
+                `${notiContent} (${group?.name || "nhóm"})`,
+                userSocketMap
+            );
+        } catch (notifyErr) {
+            console.error("Không thể gửi thông báo duyệt/từ chối bài viết:", notifyErr);
+        }
         res.json({ message: `Post ${action}d successfully` });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -364,6 +411,41 @@ const reactToGroupPost = async (req, res) => {
             { type },
             { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true }
         );
+
+        // Gửi thông báo cho chủ post group
+        try {
+            const groupPost = await GroupPost.findById(postgr_id);
+            if (groupPost && groupPost.user_id.toString() !== user_id.toString()) {
+                // Lấy danh sách user đã react (trừ chủ post)
+                const reactions = await PostReaction.find({ postgr_id })
+                    .populate("user_id", "username");
+                // Lọc ra user react khác chủ post
+                const otherReactUsers = reactions.filter(
+                    r => r.user_id && r.user_id._id.toString() !== groupPost.user_id.toString()
+                );
+                if (otherReactUsers.length > 0) {
+                    const currentUser = otherReactUsers.find(r => r.user_id._id.toString() === user_id.toString());
+                    const otherCount = otherReactUsers.length - 1;
+                    let contentNoti = "";
+                    if (otherCount > 0) {
+                        contentNoti = `${currentUser.user_id.username} và ${otherCount} người khác đã bày tỏ cảm xúc bài viết của bạn trong nhóm.`;
+                    } else {
+                        contentNoti = `${currentUser.user_id.username} đã bày tỏ cảm xúc bài viết của bạn trong nhóm.`;
+                    }
+                    const io = getSocketIO();
+                    const userSocketMap = getUserSocketMap();
+                    await notificationService.createNotification(
+                        io,
+                        groupPost.user_id,
+                        "group_post_reaction",
+                        contentNoti,
+                        userSocketMap
+                    );
+                }
+            }
+        } catch (notifyErr) {
+            console.error("Không thể gửi thông báo reaction group post:", notifyErr);
+        }
 
         res.status(201).json({ message: "Reaction saved", reaction });
     } catch (err) {
