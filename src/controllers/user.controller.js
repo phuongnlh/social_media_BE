@@ -10,25 +10,27 @@ const redisClient = require("../config/database.redis");
 // Đăng ký tài khoản người dùng mới
 const registerUser = async (req, res) => {
   try {
-    const { username, email, password } = req.body;
+    const { fullName, email, password } = req.body;
     // Kiểm tra email đã tồn tại hay chưa
     const checkUser = await User.findOne({ email });
     if (checkUser) {
       return res.status(400).json({ message: "Email đã được sử dụng" });
     }
+    const username = `${Date.now()}`;
     // Tạo mật khẩu băm và muối
     const { hash, salt } = genPwd(password);
     // Tạo người dùng mới
-    const newUser = await new User({ username, email, hash, salt }).save();
+    const newUser = await new User({ fullName, email, hash, salt, username }).save();
     // Tạo token xác thực email
     const token = signToken({ id: newUser._id }, "15m");
 
     // Gửi email xác thực tài khoản
     await sendVerificationEmail(email, token);
 
-    res
-      .status(201)
-      .json({ message: "Tài khoản đã được tạo. Vui lòng xác thực email của bạn." });
+    res.status(201).json({
+      message:
+        "Registration successful! Please check your email to verify your account.",
+    });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
@@ -46,7 +48,9 @@ const verifyEmail = async (req, res) => {
       return res.status(404).json({ message: "Không tìm thấy người dùng" });
     }
     if (user.EmailVerified) {
-      return res.status(400).json({ message: "Email đã được xác thực trước đó" });
+      return res
+        .status(400)
+        .json({ message: "Email đã được xác thực trước đó" });
     }
     // Cập nhật trạng thái xác thực email
     user.EmailVerified = true;
@@ -64,17 +68,23 @@ const loginUser = async (req, res) => {
     // Tìm người dùng theo email
     const user = await User.findOne({ email: email });
     if (!user) {
-      return res.status(401).json({ message: "Email hoặc mật khẩu không hợp lệ!" });
+      return res
+        .status(401)
+        .json({ message: "Email hoặc mật khẩu không hợp lệ!" });
     }
 
     // Kiểm tra email đã được xác thực chưa
     if (!user.EmailVerified) {
-      return res.status(403).json({ message: "Vui lòng xác thực email của bạn." });
+      return res
+        .status(403)
+        .json({ message: "Vui lòng xác thực email của bạn." });
     }
 
     // Kiểm tra mật khẩu
     if (!validatePwd(password, user.hash, user.salt)) {
-      return res.status(401).json({ message: "Email hoặc mật khẩu không hợp lệ!" });
+      return res
+        .status(401)
+        .json({ message: "Email hoặc mật khẩu không hợp lệ!" });
     }
 
     // Tạo access token và refresh token
@@ -91,9 +101,9 @@ const loginUser = async (req, res) => {
     // Lưu refresh token vào cookie
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
-      path: "/api/v1/",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 ngày
+      secure: false,
       sameSite: "Lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
     });
     // Trả về access token cho client
     res.status(200).json({ accessToken });
@@ -132,9 +142,9 @@ const logoutUser = async (req, res) => {
     multi.del(refreshKey); // Xóa key của token cụ thể
     multi.sRem(userRefreshTokensSet, refreshToken); // Xóa token khỏi Set các phiên
     await multi.exec();
-    
+
     // Xóa cookie refresh token
-    res.clearCookie("refreshToken", { path: "/api/v1/" });
+    res.clearCookie("refreshToken", { path: "/" });
 
     res.json({ message: "Đăng xuất thành công" });
   } catch (err) {
@@ -200,7 +210,8 @@ const changePassword = async (req, res) => {
 
     // Tìm người dùng theo ID
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user)
+      return res.status(404).json({ message: "Không tìm thấy người dùng" });
 
     // Kiểm tra mật khẩu cũ
     const isValid = validatePwd(oldPassword, user.hash, user.salt);
@@ -268,7 +279,8 @@ const resetPassword = async (req, res) => {
     // Tìm người dùng từ ID trong token
     const user = await User.findById(decoded.id);
 
-    if (!user) return res.status(400).json({ message: "Không tìm thấy người dùng" });
+    if (!user)
+      return res.status(400).json({ message: "Không tìm thấy người dùng" });
 
     // Tạo hash mới cho mật khẩu mới
     const { hash, salt } = genPwd(newPassword);
@@ -280,13 +292,27 @@ const resetPassword = async (req, res) => {
   } catch (err) {
     // Nếu lỗi là do token không hợp lệ hoặc hết hạn
     if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
-      return res.status(401).json({ message: "Token không hợp lệ hoặc đã hết hạn" });
+      return res
+        .status(401)
+        .json({ message: "Token không hợp lệ hoặc đã hết hạn" });
     }
     // Các lỗi khác là lỗi server
     console.error(err); // Ghi lại lỗi để debug
-    return res
-      .status(500)
-      .json({ message: "Đã xảy ra lỗi từ máy chủ." });
+    return res.status(500).json({ message: "Đã xảy ra lỗi từ máy chủ." });
+  }
+};
+
+const getUser = async (req, res) => {
+  const userId = req.user._id; // Đã được xác thực từ middleware
+  try {
+    const user = await User.findById(userId);
+    res.status(200).json({
+      fullName: user.fullName,
+      email: user.email,
+      avatar_url: user.avatar_url,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 };
 
@@ -299,4 +325,5 @@ module.exports = {
   changePassword,
   forgotPassword,
   resetPassword,
+  getUser,
 };

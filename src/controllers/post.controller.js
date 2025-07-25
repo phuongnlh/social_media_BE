@@ -30,7 +30,7 @@ const createPost = async (req, res) => {
       await PostMedia.create({
         type: "post",
         post_id: post._id,
-        media_id: mediaIds
+        media_id: mediaIds,
       });
     }
 
@@ -45,15 +45,17 @@ const getAllPostsbyUser = async (req, res) => {
   try {
     const userId = req.user._id;
     // Tìm tất cả bài đăng không bị xóa của người dùng, sắp xếp theo thời gian giảm dần
-    const posts = await Post.find({ user_id: userId, isDeleted: false })
-      .sort({ created_at: -1 })
+    const posts = await Post.find({ user_id: userId, is_deleted: false })
+      .sort({ createdAt: -1 })
+      .populate("user_id", "username avatar_url fullName") // Nạp thông tin người dùng
       .lean();
-
     // Nạp thông tin media cho mỗi bài đăng
     const populatedPosts = await Promise.all(
       posts.map(async (post) => {
         // Lấy 1 document PostMedia cho mỗi post
-        const postMedia = await PostMedia.findOne({ post_id: post._id }).populate("media_id");
+        const postMedia = await PostMedia.findOne({
+          post_id: post._id,
+        }).populate("media_id");
         let media = [];
         if (postMedia && postMedia.media_id && postMedia.media_id.length > 0) {
           media = postMedia.media_id.map((m) => ({
@@ -61,13 +63,15 @@ const getAllPostsbyUser = async (req, res) => {
             type: m.media_type,
           }));
         }
+        const { user_id, ...rest } = post;
+
         return {
-          ...post,
+          ...rest,
+          author: user_id, // Rename user_id => author
           media,
         };
       })
     );
-
     res.json(populatedPosts);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -82,13 +86,14 @@ const getPostById = async (req, res) => {
     // Tìm bài đăng theo ID
     const post = await Post.findById(postId).lean();
 
-    if (!post) return res.status(404).json({ message: "Không tìm thấy bài đăng" });
-    
+    if (!post)
+      return res.status(404).json({ message: "Không tìm thấy bài đăng" });
+
     // Kiểm tra nếu bài đăng đã bị xóa và người yêu cầu không phải tác giả
     if (post.isDeleted && post.user_id.toString() !== userId.toString()) {
       return res.status(410).json({ message: "Bài đăng đã bị xóa" });
     }
-    
+
     // Kiểm tra quyền truy cập nếu bài đăng ở chế độ riêng tư
     if (
       post.type === "Private" &&
@@ -98,7 +103,9 @@ const getPostById = async (req, res) => {
     }
 
     // Lấy 1 document PostMedia cho post này
-    const postMedia = await PostMedia.findOne({ post_id: post._id }).populate("media_id");
+    const postMedia = await PostMedia.findOne({ post_id: post._id }).populate(
+      "media_id"
+    );
     let media = [];
     if (postMedia && postMedia.media_id && postMedia.media_id.length > 0) {
       media = postMedia.media_id.map((m) => ({
@@ -125,9 +132,9 @@ const updatePost = async (req, res) => {
     // Tìm bài đăng và xác minh quyền sở hữu
     const post = await Post.findOne({ _id: postId, user_id: userId });
     if (!post)
-      return res
-        .status(404)
-        .json({ message: "Không tìm thấy bài đăng hoặc không có quyền chỉnh sửa" });
+      return res.status(404).json({
+        message: "Không tìm thấy bài đăng hoặc không có quyền chỉnh sửa",
+      });
 
     // Cập nhật nội dung và thời gian cập nhật
     post.content = content || post.content;
@@ -164,7 +171,8 @@ const softDeletePost = async (req, res) => {
     await post.save();
 
     res.json({
-      message: "Bài đăng đã được chuyển vào thùng rác. Sẽ bị xóa vĩnh viễn sau 7 ngày.",
+      message:
+        "Bài đăng đã được chuyển vào thùng rác. Sẽ bị xóa vĩnh viễn sau 7 ngày.",
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -184,9 +192,9 @@ const restorePost = async (req, res) => {
       isDeleted: true,
     });
     if (!post)
-      return res
-        .status(404)
-        .json({ message: "Không tìm thấy bài đăng hoặc không nằm trong thùng rác" });
+      return res.status(404).json({
+        message: "Không tìm thấy bài đăng hoặc không nằm trong thùng rác",
+      });
 
     // Kiểm tra xem bài đăng có quá hạn khôi phục không (7 ngày)
     const now = new Date();
@@ -242,7 +250,9 @@ const sharePost = async (req, res) => {
     // Kiểm tra bài gốc có tồn tại không
     const originalPost = await Post.findById(original_post_id);
     if (!originalPost || originalPost.is_deleted) {
-      return res.status(404).json({ message: "Original post not found or deleted" });
+      return res
+        .status(404)
+        .json({ message: "Original post not found or deleted" });
     }
 
     // Không cho share bài đã share
@@ -258,7 +268,9 @@ const sharePost = async (req, res) => {
       shared_post_id: original_post_id,
     });
 
-    res.status(201).json({ message: "Post shared successfully", postId: sharedPost._id });
+    res
+      .status(201)
+      .json({ message: "Post shared successfully", postId: sharedPost._id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -276,7 +288,12 @@ const reactToPost = async (req, res) => {
     const reaction = await PostReaction.findOneAndUpdate(
       { user_id, post_id },
       { type },
-      { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true }
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+        runValidators: true,
+      }
     );
 
     res.status(201).json({ message: "Reaction saved", reaction });
@@ -290,6 +307,9 @@ const removeReaction = async (req, res) => {
   try {
     const { post_id } = req.body;
     const user_id = req.user._id;
+    const posts = await Post.find({ is_deleted: false })
+      .sort({ created_at: -1 })
+      .lean();
 
     await PostReaction.findOneAndDelete({ user_id, post_id });
 
@@ -303,14 +323,16 @@ const removeReaction = async (req, res) => {
 const getReactionsOfPost = async (req, res) => {
   try {
     const { post_id } = req.params;
-    const reactions = await PostReaction.find({ post_id }).populate("user_id", "username"); //Thêm vào các trường tương ứng nếu cần thiết
+    const reactions = await PostReaction.find({ post_id }).populate(
+      "user_id",
+      "username"
+    ); //Thêm vào các trường tương ứng nếu cần thiết
 
     //Đếm
     const counts = await PostReaction.aggregate([
       { $match: { post_id: new mongoose.Types.ObjectId(post_id) } },
-      { $group: { _id: "$type", count: { $sum: 1 } } }
+      { $group: { _id: "$type", count: { $sum: 1 } } },
     ]);
-
 
     res.status(200).json({ reactions, counts });
   } catch (err) {
@@ -322,25 +344,51 @@ const getReactionsOfPost = async (req, res) => {
 // Dùng cho trường hợp render để hiển thị trạng thái nút tương tác
 const getUserReactionsForPosts = async (req, res) => {
   try {
-    const { post_ids } = req.body;
+    const { post_id } = req.body;
     const user_id = req.user._id;
 
-    if (!Array.isArray(post_ids) || post_ids.length === 0) {
-      return res.status(400).json({ error: "post_ids must be a non-empty array" });
-    }
-
-
-    const reactions = await PostReaction.find({
-      post_id: { $in: post_ids },
-      user_id
+    const reactions = await PostReaction.findOne({
+      post_id,
+      user_id,
     });
 
-    const result = {};
-    reactions.forEach(r => {
-      result[r.post_id.toString()] = r.type;
-    });
+    res.status(200).json(reactions);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
 
-    res.status(200).json({ reactions: result });
+// Lấy tất cả bài đăng của người dùng đang đăng nhập
+const getRecommendPost = async (req, res) => {
+  try {
+    const posts = await Post.find({ is_deleted: false })
+      .sort({ createdAt: -1 })
+      .populate("user_id", "username avatar_url fullName") // Nạp thông tin người dùng
+      .lean();
+    // Nạp thông tin media cho mỗi bài đăng
+    const populatedPosts = await Promise.all(
+      posts.map(async (post) => {
+        // Lấy 1 document PostMedia cho mỗi post
+        const postMedia = await PostMedia.findOne({
+          post_id: post._id,
+        }).populate("media_id");
+        let media = [];
+        if (postMedia && postMedia.media_id && postMedia.media_id.length > 0) {
+          media = postMedia.media_id.map((m) => ({
+            url: m.url,
+            type: m.media_type,
+          }));
+        }
+        const { user_id, ...rest } = post;
+
+        return {
+          ...rest,
+          author: user_id, // Rename user_id => author
+          media,
+        };
+      })
+    );
+    res.json(populatedPosts);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -358,5 +406,6 @@ module.exports = {
   removeReaction,
   getReactionsOfPost,
   getUserReactionsForPosts,
-  sharePost
+  sharePost,
+  getRecommendPost,
 };

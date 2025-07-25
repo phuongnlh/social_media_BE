@@ -40,7 +40,7 @@ const getCommentsOfPost = async (req, res) => {
 
         // Lấy tất cả comment của post
         const comments = await Comment.find({ post_id, isDeleted: false })
-            .populate("user_id", "username")
+            .populate("user_id", "fullName avatar_url")
             .sort({ createdAt: 1 });
 
         // Biến flat array thành cây

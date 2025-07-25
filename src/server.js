@@ -8,18 +8,16 @@ const redisClient = require("./config/database.redis");
 
 // Tạo HTTP server từ app Express
 const server = http.createServer(app);
-
-// Tạo socket server
 const io = new Server(server, {
   cors: {
-    origin: "*", // Hoặc domain FE bạn dùng
+    origin: ["http://localhost:5173", "http://127.0.0.1:5173"], // Allow Vite dev server
     methods: ["GET", "POST"],
+    credentials: true, // Allow cookies
   },
+  maxHttpBufferSize: 1e8,
 });
 
-// Import logic Socket.IO (nếu có)
-require("./socket")(io); // bạn có thể tạo file socket/index.js để gọn
-
+require("./socket")(io);
 (async () => {
   try {
     await connDB();
