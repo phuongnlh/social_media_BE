@@ -344,26 +344,15 @@ const getReactionsOfPost = async (req, res) => {
 // Dùng cho trường hợp render để hiển thị trạng thái nút tương tác
 const getUserReactionsForPosts = async (req, res) => {
   try {
-    const { post_ids } = req.body;
+    const { post_id } = req.body;
     const user_id = req.user._id;
 
-    if (!Array.isArray(post_ids) || post_ids.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "post_ids must be a non-empty array" });
-    }
-
-    const reactions = await PostReaction.find({
-      post_id: { $in: post_ids },
+    const reactions = await PostReaction.findOne({
+      post_id,
       user_id,
     });
 
-    const result = {};
-    reactions.forEach((r) => {
-      result[r.post_id.toString()] = r.type;
-    });
-
-    res.status(200).json({ reactions: result });
+    res.status(200).json(reactions);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -30,6 +30,7 @@ const uploadToCloudinary = (buffers) => {
         const uploadStream = cloudinary.uploader.upload_stream(
           {
             // Tùy chọn: bạn có thể thêm folder, tag... ở đây
+            resource_type: "auto",
             folder: "chat_media",
           },
           (error, result) => {

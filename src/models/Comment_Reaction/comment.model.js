@@ -24,7 +24,6 @@ const commentSchema = new mongoose.Schema(
     },
     content: {
       type: String,
-      required: true,
     },
     media: {
       url: { type: String, required: false },
