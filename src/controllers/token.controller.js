@@ -16,8 +16,10 @@ const refreshAccessToken = async (req, res) => {
     const payload = jwt.verify(refreshToken, publicKey, {
       algorithms: ["RS256"],
     });
+    console.log(payload);
     const key = `refresh:${payload.id}:${refreshToken}`;
     const exists = await redisClient.exists(key);
+    console.log("Redis key exists:", exists);
     if (!exists) {
       // 🚨 Replay attack hoặc token đã bị xóa
       // → Xóa toàn bộ session của user

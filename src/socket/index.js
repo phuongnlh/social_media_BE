@@ -253,47 +253,4 @@ module.exports = (io) => {
       console.log("User disconnected from notifications namespace:", socket.id);
     });
   });
-
-  // // ===== LEGACY SUPPORT (tạm thời giữ để backward compatibility) =====
-  // io.on("connection", (socket) => {
-  //   console.log("User connected to main namespace (legacy):", socket.id);
-
-  //   //Đăng kí UserId cho socket (legacy)
-  //   socket.on("register", ({ userId }) => {
-  //     socket.userId = userId.toString();
-
-  //     // Thêm socket.id vào danh sách socketId của userId
-  //     if (!userSocketMap.has(userId)) {
-  //       userSocketMap.set(userId, new Set());
-  //     }
-  //     userSocketMap.get(userId).add(socket.id);
-  //   });
-
-  //   // Legacy message handling - redirect to new namespace
-  //   socket.on("send-message", async (data) => {
-  //     console.warn(
-  //       "Legacy send-message event received. Please use /messages namespace"
-  //     );
-  //     // Có thể redirect hoặc xử lý legacy
-  //   });
-
-  //   // Legacy notification handling
-  //   socket.on("send-notification", async (data) => {
-  //     console.warn(
-  //       "Legacy send-notification event received. Please use /notifications namespace"
-  //     );
-  //   });
-
-  //   socket.on("disconnect", () => {
-  //     const userId = socket.userId;
-  //     if (userId && userSocketMap.has(userId)) {
-  //       const sockets = userSocketMap.get(userId);
-  //       sockets.delete(socket.id);
-  //       if (sockets.size === 0) {
-  //         userSocketMap.delete(userId);
-  //       }
-  //     }
-  //     console.log("User disconnected from main namespace (legacy):", socket.id);
-  //   });
-  // });
 };

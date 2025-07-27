@@ -8,6 +8,7 @@ const groupPostRoutes = require("./group_post.route");
 const friendRoutes = require("./friend.route");
 const notificationRoutes = require("./notification.route");
 const chatRoutes = require("./chat.route");
+const channelRoutes = require("./channel.route");
 const mediaRoutes = require("./media.route");
 const router = express.Router();
 
@@ -24,6 +25,7 @@ router.use("/group-post", groupPostRoutes);
 router.use("/", friendRoutes);
 router.use("/notifications", notificationRoutes);
 router.use("/chat", chatRoutes);
+router.use("/channels", channelRoutes);
 router.use("/media", mediaRoutes);
 
 module.exports = router;
