@@ -3,6 +3,8 @@ const Media = require("../models/media.model");
 const PostMedia = require("../models/postMedia.model");
 const PostReaction = require("../models/Comment_Reaction/post_reaction.model");
 const mongoose = require("mongoose");
+const notificationService = require("../services/notification.service");
+const { getSocketIO, getUserSocketMap } = require("../socket/io-instance");
 
 // Tạo bài đăng mới với tệp media (nếu có)
 const createPost = async (req, res) => {
@@ -295,7 +297,39 @@ const reactToPost = async (req, res) => {
         runValidators: true,
       }
     );
-
+    // Gửi thông báo cho chủ post
+    try {
+      const post = await Post.findById(post_id);
+      if (post && post.user_id.toString() !== user_id.toString()) {
+        // Lấy danh sách user đã react (trừ chủ post)
+        const reactions = await PostReaction.find({ post_id })
+          .populate("user_id", "username fullName");
+        const otherReactUsers = reactions.filter(
+          r => r.user_id && r.user_id._id.toString() !== post.user_id.toString()
+        );
+        if (otherReactUsers.length > 0) {
+          const currentUser = otherReactUsers.find(r => r.user_id._id.toString() === user_id.toString());
+          const otherCount = otherReactUsers.length - 1;
+          let contentNoti = "";
+          if (otherCount > 0) {
+            contentNoti = `${currentUser.user_id.fullName || currentUser.user_id.username} và ${otherCount} người khác đã bày tỏ cảm xúc bài viết của bạn.`;
+          } else {
+            contentNoti = `${currentUser.user_id.fullName || currentUser.user_id.username} đã bày tỏ cảm xúc bài viết của bạn.`;
+          }
+          const io = getSocketIO();
+          const userSocketMap = getUserSocketMap();
+          await notificationService.createNotification(
+            io,
+            post.user_id,
+            "post_reaction",
+            contentNoti,
+            userSocketMap
+          );
+        }
+      }
+    } catch (notifyErr) {
+      console.error("Không thể gửi thông báo reaction bài viết:", notifyErr);
+    }
     res.status(201).json({ message: "Reaction saved", reaction });
   } catch (err) {
     res.status(500).json({ error: err.message });
