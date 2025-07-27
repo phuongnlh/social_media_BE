@@ -6,9 +6,9 @@ const { getSocketIO } = require("../socket/io-instance");
 // Gửi lời mời kết bạn đến một người dùng khác
 const sendFriendRequest = async (req, res) => {
   const userId1 = req.user._id;
-  const { userId2 } = req.body;
+  const { user_id } = req.body;
 
-  if (userId1.toString() === userId2)
+  if (userId1.toString() === user_id)
     return res
       .status(400)
       .json({ message: "Không thể tự kết bạn với chính mình." });
@@ -17,8 +17,8 @@ const sendFriendRequest = async (req, res) => {
     // Kiểm tra xem đã có mối quan hệ bạn bè hoặc đã có lời mời trước đó
     const existing = await Friendship.findOne({
       $or: [
-        { user_id_1: userId1, user_id_2: userId2 },
-        { user_id_1: userId2, user_id_2: userId1 },
+        { user_id_1: userId1, user_id_2: user_id },
+        { user_id_1: user_id, user_id_2: userId1 },
       ],
     });
 
@@ -30,7 +30,7 @@ const sendFriendRequest = async (req, res) => {
     // Tạo mối quan hệ bạn bè mới với trạng thái mặc định là "pending"
     const friendship = await Friendship.create({
       user_id_1: userId1,
-      user_id_2: userId2,
+      user_id_2: user_id,
     });
 
     // Lấy tên người dùng gửi lời mời để hiển thị trong thông báo
@@ -43,9 +43,9 @@ const sendFriendRequest = async (req, res) => {
 
       await notificationService.createNotification(
         io,
-        userId2,
+        user_id,
         "friend_request",
-        `${sender.username} đã gửi cho bạn lời mời kết bạn`,
+        `${sender.fullName} đã gửi cho bạn lời mời kết bạn`,
         userSocketMap
       );
     } catch (notifyErr) {
@@ -67,7 +67,7 @@ const respondFriendRequest = async (req, res) => {
 
   try {
     // Tìm kiếm lời mời kết bạn và kiểm tra quyền
-    const friendship = await Friendship.findById(friendshipId);
+    const friendship = await Friendship.findOne({ user_id_1: friendshipId });
     if (!friendship || friendship.user_id_2.toString() !== userId.toString())
       return res
         .status(404)
@@ -95,9 +95,13 @@ const respondFriendRequest = async (req, res) => {
         console.error("Không thể gửi thông báo chấp nhận kết bạn:", notifyErr);
         // Tiếp tục thực thi ngay cả khi gửi thông báo thất bại
       }
-    } else if (action === "decline") {
+    } else if (action == "decline") {
       // Từ chối lời mời kết bạn
-      friendship.status = "declined";
+      // friendship.status = "declined";
+      await Friendship.findOneAndDelete({ user_id_1: friendshipId });
+      res.status(200).json({
+        message: "Đã từ chối lời mời kết bạn",
+      });
     } else if (action === "block") {
       // Chặn người gửi lời mời
       friendship.status = "blocked";
@@ -155,7 +159,7 @@ const getIncomingFriendRequests = async (req, res) => {
     const requests = await Friendship.find({
       user_id_2: userId,
       status: "pending",
-    }).populate("user_id_1", "username avatar_url");
+    }).populate("user_id_1", "fullName avatar_url createdAt");
 
     // Trả về thông tin của người gửi lời mời
     res.json(requests.map((r) => r.user_id_1));
@@ -226,10 +230,34 @@ const getUnfriendedUsers = async (req, res) => {
   }
 };
 
+// Thu hồi lời mời kết bạn
+const withdrawFriendRequest = async (req, res) => {
+  const userId = req.user._id;
+  const { friendId } = req.body;
+
+  try {
+    // Tìm và xóa lời mời kết bạn
+    const friendship = await Friendship.findOneAndDelete({
+      user_id_1: userId,
+      user_id_2: friendId,
+      status: "pending",
+    });
+
+    if (!friendship) {
+      return res.status(404).json({ message: "Lời mời không tồn tại" });
+    }
+
+    res.status(200).json({ message: "Đã thu hồi lời mời kết bạn", friendship });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 module.exports = {
   sendFriendRequest,
   respondFriendRequest,
   getFriendsList,
+  withdrawFriendRequest,
   getUnfriendedUsers,
   getIncomingFriendRequests,
 };

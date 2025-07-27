@@ -17,5 +17,7 @@ router.post("/", isLogin,upload.array("media",1), interactController.createComme
 router.get("/:post_id", interactController.getCommentsOfPost);
 router.put("/:comment_id", isLogin, interactController.editComment);
 router.delete("/:comment_id", isLogin, interactController.softDeleteComment);
+// Count comments of a post
+router.get("/count/:post_id", isLogin, interactController.countCommentsOfPost);
 
 module.exports = router;
