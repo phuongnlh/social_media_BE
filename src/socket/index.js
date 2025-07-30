@@ -1,4 +1,5 @@
 const Message = require("../models/message.model");
+const Channel = require("../models/Chat/channel.model"); // Thêm import model Channel
 const Notification = require("../models/notification.model");
 const { uploadToCloudinary } = require("../utils/upload_utils");
 const notificationService = require("../services/notification.service");
@@ -10,7 +11,7 @@ const notificationUserSocketMap = new Map(); // userId => socket.id cho notifica
 
 module.exports = (io) => {
   // Make IO instance available globally
-  setSocketIO(io, userSocketMap);
+  setSocketIO(io, userSocketMap, notificationUserSocketMap);
 
   // ===== MESSAGING NAMESPACE =====
   const messagesNamespace = io.of("/messages");
@@ -34,7 +35,7 @@ module.exports = (io) => {
     // Xử lý gửi tin nhắn
     socket.on("send_message", async (data) => {
       try {
-        const { from, to, content, media = [] } = data;
+        const { from, channelId, content, media = [] } = data;
 
         let mediaPayload = [];
         if (media.length > 0) {
@@ -47,40 +48,93 @@ module.exports = (io) => {
 
         const message = await Message.create({
           from,
-          to,
+          channelId,
           content,
           media: mediaPayload,
         });
 
-        // Gửi tin nhắn cho người nhận qua messaging namespace
-        const toSocketIds = messageUserSocketMap.get(to.toString());
-        if (toSocketIds) {
-          for (const socketId of toSocketIds) {
-            messagesNamespace.to(socketId).emit("receive_message", message);
+        // Tìm channel để lấy danh sách thành viên
+        const channel = await Channel.findOne({ channelId });
+        if (!channel) {
+          throw new Error("Channel không tồn tại");
+        }
+
+        // Gửi tin nhắn cho tất cả thành viên trong channel (trừ người gửi)
+        const recipientMembers = channel.members.filter(
+          (member) => member.userId.toString() !== from.toString()
+        );
+
+        // Thêm thông tin channel vào message để client biết message thuộc kênh nào
+        const messageWithChannel = {
+          ...message.toObject(),
+          channelType: channel.type,
+          channelName: channel.name,
+        };
+
+        // Gửi tin nhắn đến tất cả thành viên
+        for (const member of recipientMembers) {
+          const memberId = member.userId.toString();
+          const memberSocketIds = messageUserSocketMap.get(memberId);
+
+          if (memberSocketIds) {
+            for (const socketId of memberSocketIds) {
+              messagesNamespace
+                .to(socketId)
+                .emit("receive_message", messageWithChannel);
+            }
+          }
+
+          // Tạo thông báo cho thành viên (chỉ khi họ không bị mute)
+          if (!member.isMuted) {
+            try {
+              const notiWithUser = await message.populate(
+                "from",
+                "fullName avatar_url"
+              );
+              const notificationsNamespace = io.of("/notifications");
+
+              // Tạo nội dung thông báo khác nhau cho kênh riêng tư và nhóm
+              let notificationContent = "";
+              if (channel.type === "private") {
+                notificationContent = `${notiWithUser.from?.fullName} đã gửi cho bạn một tin nhắn mới`;
+              } else {
+                notificationContent = `${
+                  notiWithUser.from?.fullName
+                } đã gửi tin nhắn trong nhóm ${channel.name || "Group chat"}`;
+              }
+
+              await notificationService.createNotificationWithNamespace(
+                notificationsNamespace,
+                memberId,
+                "message",
+                notificationContent,
+                notificationUserSocketMap,
+                {
+                  messageId: message._id,
+                  fromUser: from,
+                  channelId: channelId,
+                }
+              );
+            } catch (notifyErr) {
+              console.error(
+                "Failed to create message notification:",
+                notifyErr
+              );
+            }
           }
         }
 
-        // Tạo thông báo cho người nhận tin nhắn qua notification namespace
-        try {
-          const notiWithUser = await message.populate(
-            "from",
-            "fullName avatar_url"
-          );
-          const notificationsNamespace = io.of("/notifications");
-          await notificationService.createNotificationWithNamespace(
-            notificationsNamespace,
-            to,
-            "message",
-            `${notiWithUser.from?.fullName} đã gửi cho bạn một tin nhắn mới`,
-            notificationUserSocketMap,
-            { messageId: message._id, fromUser: from }
-          );
-        } catch (notifyErr) {
-          console.error("Failed to create message notification:", notifyErr);
-        }
+        // Cập nhật message với readBy để người gửi được đánh dấu là đã đọc
+        await Message.findByIdAndUpdate(message._id, {
+          $push: { readBy: { userId: from, readAt: new Date() } },
+        });
 
         // Xác nhận gửi thành công cho người gửi
-        socket.emit("message_sent", message);
+        const populatedMessage = await Message.findById(message._id).populate(
+          "from",
+          "fullName avatar_url"
+        );
+        socket.emit("message_sent", populatedMessage);
       } catch (err) {
         console.error("Send message error:", err);
         socket.emit("error_message", "Gửi tin nhắn thất bại.");

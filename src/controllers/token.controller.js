@@ -16,10 +16,8 @@ const refreshAccessToken = async (req, res) => {
     const payload = jwt.verify(refreshToken, publicKey, {
       algorithms: ["RS256"],
     });
-    console.log(payload);
     const key = `refresh:${payload.id}:${refreshToken}`;
     const exists = await redisClient.exists(key);
-    console.log("Redis key exists:", exists);
     if (!exists) {
       // 🚨 Replay attack hoặc token đã bị xóa
       // → Xóa toàn bộ session của user
@@ -33,8 +31,6 @@ const refreshAccessToken = async (req, res) => {
         .status(403)
         .json({ message: "Possible replay attack. All sessions terminated." });
     }
-    // ✅ Token hợp lệ → Xóa cái cũ
-    await redisClient.del(key);
 
     const newAccessToken = signToken({ id: payload.id }, "15m");
     const newRefreshToken = signToken({ id: payload.id }, "7d");
@@ -54,6 +50,8 @@ const refreshAccessToken = async (req, res) => {
       sameSite: "Lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
+    // ✅ Token hợp lệ → Xóa cái cũ
+    await redisClient.del(key);
 
     res.status(200).json({ accessToken: newAccessToken });
   } catch (err) {

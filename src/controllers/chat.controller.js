@@ -127,32 +127,10 @@ const markAsRead = async (req, res) => {
   }
 };
 
-// Lấy danh sách channel chat, tin nhắn giữa người dùng hiện tại và người khác
-const getChannelChatList = async (req, res) => {
-  try {
-    const currentUserId = req.user._id;
-    
-    const channels = await channelModel.find({
-      members: currentUserId,
-    }).populate("members", "fullName avatar_url").sort({ updatedAt: -1 });
 
-    res.status(200).json({
-      success: true,
-      message: "Channels retrieved successfully",
-      data: channels,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Error retrieving channels",
-      error: error.message,
-    });
-  }
-};
       
 module.exports = {
   getChatList,
   getMessagesWithUser,
   markAsRead,
-  getChannelChatList,
 };

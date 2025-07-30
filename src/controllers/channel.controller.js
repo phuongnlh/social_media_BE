@@ -1,4 +1,5 @@
 const channelModel = require("../models/Chat/channel.model");
+const messageModel = require("../models/message.model");
 
 // Tạo channel Private 1-1
 const createPrivateChannel = async (req, res) => {
@@ -345,7 +346,7 @@ const getUserChannels = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: "Channels retrieved successfully",
+      message: "User channels retrieved successfully",
       data: channels,
     });
   } catch (error) {
@@ -585,10 +586,46 @@ const leaveGroupChannel = async (req, res) => {
   }
 };
 
+// Lấy danh sách channel chat, tin nhắn giữa người dùng hiện tại và người khác
+const getChannelChatList = async (req, res) => {
+  try {
+    const currentUserId = req.user._id;
+    
+    const channels = await channelModel.find({
+      members: currentUserId,
+    }).populate("members", "fullName avatar_url").sort({ updatedAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      message: "Channels retrieved successfully",
+      data: channels,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error retrieving channels",
+      error: error.message,
+    });
+  }
+};
+
+// Get messages in a channel
+const getChannelMessages = async (req, res) => {
+  try {
+    const { channelId } = req.params;
+    const messages = await messageModel.find({ channelId }).sort({ createdAt: 1 });
+    res.json({ success: true, messages });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
 module.exports = {
   createPrivateChannel,
   createGroupChannel,
   updateGroupName,
+  getChannelChatList,
+  getChannelMessages,
   updateGroupAvatar,
   addMemberToGroup,
   removeMemberFromGroup,

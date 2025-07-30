@@ -3,8 +3,7 @@ const mongoose = require("mongoose");
 const messageSchema = new mongoose.Schema(
   {
     from: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    to: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    // channelId: { type: String, required: true }, // ID của channel (private hoặc group)
+    channelId: { type: String, required: true }, // ID của channel (private hoặc group)
 
     content: { type: String }, // văn bản (có thể null nếu chỉ gửi ảnh/video)
 
@@ -15,30 +14,28 @@ const messageSchema = new mongoose.Schema(
       },
     ],
 
-    is_read: { type: Boolean, default: false }, // Trạng thái đã đọc
-
     // // Tracking read status for each member in channel
-    // readBy: [
-    //   {
-    //     userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-    //     readAt: { type: Date, default: Date.now },
-    //   },
-    // ],
+    readBy: [
+      {
+        userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        readAt: { type: Date, default: Date.now },
+      },
+    ],
 
-    // // Message type for system messages
-    // messageType: {
-    //   type: String,
-    //   enum: ["user", "system"],
-    //   default: "user",
-    // },
+    // Message type for system messages
+    messageType: {
+      type: String,
+      enum: ["user", "system"],
+      default: "user",
+    },
 
-    // // For system messages (member added, removed, etc.)
-    // systemMessageData: {
-    //   action: { type: String }, // "member_added", "member_removed", "group_renamed", etc.
-    //   targetUser: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-    //   oldValue: { type: String },
-    //   newValue: { type: String },
-    // },
+    // For system messages (member added, removed, etc.)
+    systemMessageData: {
+      action: { type: String }, // "member_added", "member_removed", "group_renamed", etc.
+      targetUser: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+      oldValue: { type: String },
+      newValue: { type: String },
+    },
   },
   { timestamps: true }
 );

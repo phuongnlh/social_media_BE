@@ -5,7 +5,11 @@ const Post = require("../models/post.model");
 const GroupPost = require("../models/Group/group_post.model");
 const User = require("../models/user.model");
 const notificationService = require("../services/notification.service");
-const { getSocketIO, getUserSocketMap } = require("../socket/io-instance");
+const {
+  getSocketIO,
+  getUserSocketMap,
+  getNotificationUserSocketMap,
+} = require("../socket/io-instance");
 
 //* Comment:
 // Tạo bình luận mới
@@ -42,7 +46,8 @@ const createComment = async (req, res) => {
     // Gửi thông báo
     try {
       const io = getSocketIO();
-      const userSocketMap = getUserSocketMap();
+      const notificationsNamespace = io.of("/notifications");
+      const notificationUserSocketMap = getNotificationUserSocketMap();
       const commenter = await User.findById(user_id);
 
       // 1. Reply comment: gửi cho chủ comment được reply (nếu không phải là mình)
@@ -52,12 +57,13 @@ const createComment = async (req, res) => {
           parentComment &&
           parentComment.user_id.toString() !== user_id.toString()
         ) {
-          await notificationService.createNotification(
-            io,
+          await notificationService.createNotificationWithNamespace(
+            notificationsNamespace,
             parentComment.user_id,
             "reply_comment",
-            `${commenter.username} đã trả lời bình luận của bạn`,
-            userSocketMap
+            `${commenter.fullName} đã trả lời bình luận của bạn`,
+            notificationUserSocketMap,
+            { fromUser: commenter._id, relatedId: comment._id }
           );
         }
       } else {
@@ -65,12 +71,13 @@ const createComment = async (req, res) => {
         if (post_id) {
           const post = await Post.findById(post_id);
           if (post && post.user_id.toString() !== user_id.toString()) {
-            await notificationService.createNotification(
-              io,
+            await notificationService.createNotificationWithNamespace(
+              notificationsNamespace,
               post.user_id,
               "comment",
-              `${commenter.username} đã bình luận vào bài viết của bạn`,
-              userSocketMap
+              `${commenter.fullName} đã bình luận vào bài viết của bạn`,
+              notificationUserSocketMap,
+              { fromUser: commenter._id, relatedId: comment._id }
             );
           }
         }
@@ -83,12 +90,13 @@ const createComment = async (req, res) => {
           ) {
             const group = await Group.findById(groupPost.group_id);
             const groupName = group ? group.name : "nhóm";
-            await notificationService.createNotification(
-              io,
+            await notificationService.createNotificationWithNamespace(
+              notificationsNamespace,
               groupPost.user_id,
               "comment",
-              `${commenter.username} đã bình luận vào bài viết của bạn trong nhóm ${groupName}`,
-              userSocketMap
+              `${commenter.fullName} đã bình luận vào bài viết của bạn trong nhóm ${groupName}`,
+              notificationUserSocketMap,
+              { fromUser: commenter._id, relatedId: comment._id }
             );
           }
         }

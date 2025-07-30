@@ -3,6 +3,9 @@ const router = express.Router();
 const { isLogin } = require("../middlewares/auth");
 const channelController = require("../controllers/channel.controller");
 
+// Get all channels
+router.get("/all", isLogin, channelController.getChannelChatList);
+
 // Channel Management Routes
 router.post("/private", isLogin, channelController.createPrivateChannel);
 router.post("/group", isLogin, channelController.createGroupChannel);
@@ -25,5 +28,7 @@ router.put(
   channelController.changeMemberRole
 );
 router.delete("/:channelId", isLogin, channelController.deleteGroupChannel);
+// Get messages in a channel
+router.get("/:channelId/messages", isLogin, channelController.getChannelMessages);
 
 module.exports = router;

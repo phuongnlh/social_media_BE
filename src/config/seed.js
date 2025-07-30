@@ -516,8 +516,8 @@ async function seed() {
     group: group2._id,
     user: user2._id,
     role: "member",
-    status: "pending",
-  }); // Linh pending in Food group
+    status: "banned",
+  }); // Linh banned in Food group
 
   await GroupMember.create({
     group: group3._id,
