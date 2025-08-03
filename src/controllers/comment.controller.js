@@ -8,6 +8,23 @@ const notificationService = require("../services/notification.service");
 const { getSocketIO, getUserSocketMap } = require("../socket/io-instance");
 
 //* Comment:
+// Đếm số lượng bình luận của một bài viết
+const getGroupPostCommentCount = async (req, res) => {
+    try {
+        const { postgr_id } = req.params;
+        
+        const count = await Comment.countDocuments({ 
+            postgr_id, 
+            isDeleted: false 
+        });
+        
+        res.status(200).json({ count });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+
 // Tạo bình luận mới
 const createComment = async (req, res) => {
     try {
@@ -102,32 +119,26 @@ const getCommentsOfPost = async (req, res) => {
         const { post_id, postgr_id } = req.params;
 
         let filter = { isDeleted: false };
-        if (post_id) filter.post_id = post_id;
-        if (postgr_id) filter.postgr_id = postgr_id;
 
-        // Lấy tất cả comment của post
-        const comments = await Comment.find({ post_id, isDeleted: false })
+        if (post_id) filter.post_id = new mongoose.Types.ObjectId(post_id);
+        if (postgr_id) filter.postgr_id = new mongoose.Types.ObjectId(postgr_id);
+
+        const comments = await Comment.find(filter)
             .populate("user_id", "fullName avatar_url")
             .sort({ createdAt: 1 });
 
-        // Biến flat array thành cây
         const commentMap = {};
         const roots = [];
 
-        // Tạo map từ _id -> comment
         comments.forEach(comment => {
             comment = comment.toObject();
             comment.replies = [];
             commentMap[comment._id] = comment;
         });
 
-        // Gán reply vào parent
         comments.forEach(comment => {
-            if (comment.parent_comment_id) {
-                const parent = commentMap[comment.parent_comment_id];
-                if (parent) {
-                    parent.replies.push(commentMap[comment._id]);
-                }
+            if (comment.parent_comment_id && commentMap[comment.parent_comment_id]) {
+                commentMap[comment.parent_comment_id].replies.push(commentMap[comment._id]);
             } else {
                 roots.push(commentMap[comment._id]);
             }
@@ -309,5 +320,6 @@ module.exports = {
     reactToComment,
     removeCommentReaction,
     getReactionsOfComment,
-    getUserReactionsForComments
+    getUserReactionsForComments,
+    getGroupPostCommentCount
 };

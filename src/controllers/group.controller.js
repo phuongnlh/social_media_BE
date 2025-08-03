@@ -1,6 +1,7 @@
 const Group = require("../models/Group/group.model");
 const GroupMember = require("../models/Group/group_member.model");
 const GroupRequest = require("../models/Group/group_request.model");
+const GroupPost = require("../models/Group/group_post.model");
 const notificationService = require("../services/notification.service");
 const { getSocketIO, getUserSocketMap } = require("../socket/io-instance");
 
@@ -14,6 +15,26 @@ const isGroupAdmin = async (group_id, user_id) => {
     });
     return !!member;
 };
+
+//Lấy thống kê nhóm (Thành viên và bài viết)
+async function getGroupStats(groupId) {
+    const [totalMembers, totalPosts, latestPost] = await Promise.all([
+        GroupMember.countDocuments({ group: groupId, status: "approved" }),
+        GroupPost.countDocuments({ group_id: groupId, status: "approved" }),
+        GroupPost.findOne({
+            group_id: groupId,
+            status: "approved"
+        })
+            .sort({ created_at: -1 })
+            .select('created_at')
+    ]);
+    // Nếu không có bài viết nào, sẽ dùng thời gian tạo nhóm làm fallback ở getMyGroups
+    return {
+        totalMembers,
+        totalPosts,
+        lastActivity: latestPost?.created_at || null
+    };
+}
 
 // Tạo group mới
 const createGroup = async (req, res) => {
@@ -44,7 +65,18 @@ const getMyGroups = async (req, res) => {
         if (!memberships.length) {
             return res.status(200).json({ message: "You haven't joined any groups yet", groups: [] });
         }
-        res.status(200).json({ groups: memberships.map(m => m.group) });
+        const groupsWithStats = await Promise.all(
+            memberships.map(async m => {
+                const stats = await getGroupStats(m.group._id);
+                return {
+                    ...m.group.toObject(),
+                    role: m.role,
+                    ...stats,
+                    lastActivity: stats.lastActivity || m.group.created_at
+                };
+            })
+        );
+        res.status(200).json({ groups: groupsWithStats });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

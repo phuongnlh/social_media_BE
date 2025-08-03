@@ -86,7 +86,7 @@ const createGroupPost = async (req, res) => {
     }
 };
 
-// Lấy tất cả bài viết trong group
+// Lấy tất cả bài viết trong group, Nếu là admin thì lấy tất cả bài chưa xóa, nếu không thì chỉ lấy bài đã duyệt hoặc bài của chính mình
 const getAllPostsInGroup = async (req, res) => {
     try {
         const { group_id } = req.params;
@@ -282,6 +282,76 @@ const shareGroupPostToWall = async (req, res) => {
     }
 };
 
+// Lấy feed bài viết từ tất cả group mà user đã tham gia
+const getGroupFeed = async (req, res) => {
+    try {
+        const user_id = req.user._id;
+        const page = parseInt(req.query.page) > 0 ? parseInt(req.query.page) : 1;
+        const limit = parseInt(req.query.limit) > 0 ? parseInt(req.query.limit) : 10;
+        const skip = (page - 1) * limit;
+
+        // Lấy danh sách group user đã tham gia
+        const memberships = await GroupMember.find({ user: user_id, status: "approved" }).select("group");
+        const groupIds = memberships.map(m => m.group);
+
+        if (!groupIds.length) {
+            return res.json({ posts: [], total: 0, page, limit });
+        }
+
+        // Query tổng số lượng post
+        const total = await GroupPost.countDocuments({
+            group_id: { $in: groupIds },
+            is_deleted: false,
+            $or: [
+                { status: "approved" },
+                { user_id: user_id }
+            ]
+        });
+
+        // Lấy post, populate group name và user fullname
+        const posts = await GroupPost.find({
+            group_id: { $in: groupIds },
+            is_deleted: false,
+            $or: [
+                { status: "approved" },
+                { user_id: user_id }
+            ]
+        })
+            .sort({ created_at: -1 })
+            .skip(skip)
+            .limit(limit)
+            .populate([
+                { path: "user_id", select: "username fullName avatar_url" },
+                { path: "group_id", select: "name" }
+            ])
+            .lean();
+
+        // Lấy media cho từng post
+        const populatedPosts = await Promise.all(
+            posts.map(async (post) => {
+                const postMedia = await PostMedia.findOne({ postgr_id: post._id }).populate("media_id");
+                let media = [];
+                if (postMedia && postMedia.media_id && postMedia.media_id.length > 0) {
+                    media = postMedia.media_id.map((m) => ({
+                        url: m.url,
+                        type: m.media_type,
+                    }));
+                }
+                return {
+                    ...post,
+                    group_name: post.group_id?.name || "",
+                    user_fullname: post.user_id?.fullname || "",
+                    media,
+                };
+            })
+        );
+
+        res.json({ posts: populatedPosts, total, page, limit });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
 // Admin duyệt bài viết trong group
 const approveGroupPost = async (req, res) => {
     try {
@@ -345,7 +415,7 @@ const approveGroupPost = async (req, res) => {
                 io,
                 post.user_id,
                 notiType,
-                `${notiContent} (${group?.name || "nhóm"})`,
+                `${notiContent}`,
                 userSocketMap
             );
         } catch (notifyErr) {
@@ -524,5 +594,6 @@ module.exports = {
     reactToGroupPost,
     removeGroupPostReaction,
     getReactionsOfGroupPost,
-    getUserReactionsForGroupPosts
+    getUserReactionsForGroupPosts,
+    getGroupFeed
 };
