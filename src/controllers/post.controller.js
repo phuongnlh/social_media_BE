@@ -359,7 +359,7 @@ const getReactionsOfPost = async (req, res) => {
     const { post_id } = req.params;
     const reactions = await PostReaction.find({ post_id }).populate(
       "user_id",
-      "username"
+      "fullName avatar_url"
     ); //Thêm vào các trường tương ứng nếu cần thiết
 
     //Đếm
@@ -395,7 +395,7 @@ const getUserReactionsForPosts = async (req, res) => {
 // Lấy tất cả bài đăng của người dùng đang đăng nhập
 const getRecommendPost = async (req, res) => {
   try {
-    const posts = await Post.find({ is_deleted: false })
+    const posts = await Post.find({ is_deleted: false, type: "Public" })
       .sort({ createdAt: -1 })
       .populate("user_id", "username avatar_url fullName") // Nạp thông tin người dùng
       .lean();

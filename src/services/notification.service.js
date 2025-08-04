@@ -60,7 +60,6 @@ const createNotificationWithNamespace = async (
         namespace.to(socketId).emit("new_notification", notificationWithUser);
       }
     }
-
     return notificationWithUser;
   } catch (error) {
     console.error("Error creating notification with namespace:", error);

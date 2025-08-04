@@ -305,12 +305,8 @@ const resetPassword = async (req, res) => {
 const getUser = async (req, res) => {
   const userId = req.user._id; // Đã được xác thực từ middleware
   try {
-    const user = await User.findById(userId);
-    res.status(200).json({
-      fullName: user.fullName,
-      email: user.email,
-      avatar_url: user.avatar_url,
-    });
+    const user = await User.findById(userId).select("-hash -salt -isDeleted");
+    res.status(200).json(user);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

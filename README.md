@@ -1,6 +1,6 @@
 # Social Media Backend API
 
-This repository contains the backend API for a social media application. It provides endpoints for user authentication, post management, friend relationships, messaging, and more.
+This repository contains the backend API for a social media application with channel-based messaging system. It provides endpoints for user authentication, post management, friend relationships, channel messaging, group management, and real-time notifications.
 
 ## Table of Contents
 
@@ -10,17 +10,21 @@ This repository contains the backend API for a social media application. It prov
   - [User Routes](#user-routes)
   - [Post Routes](#post-routes)
   - [Comment Routes](#comment-routes)
-  - [Like Routes](#like-routes)
+  - [Reaction Routes](#reaction-routes)
   - [Friend & Follow Routes](#friend--follow-routes)
+  - [Channel & Chat Routes](#channel--chat-routes)
+  - [Group Routes](#group-routes)
+  - [Media Routes](#media-routes)
   - [Notification Routes](#notification-routes)
   - [Token Routes](#token-routes)
 - [WebSocket API](#websocket-api)
+- [Models](#models)
 
 ## Setup
 
 ### Prerequisites
 
-- Node.js
+- Node.js (v14 or higher)
 - MongoDB
 - Redis
 - Cloudinary account (for media uploads)
@@ -29,12 +33,26 @@ This repository contains the backend API for a social media application. It prov
 
 1. Clone the repository
 2. Install dependencies:
-   ```
+   ```bash
    npm install
    ```
-3. Set up environment variables (create a `.env` file in the root directory)
-4. Start the server:
+3. Set up environment variables (create a `.env` file in the root directory):
+   ```env
+   PORT=3000
+   MONGODB_URI=mongodb://localhost:27017/social_media
+   REDIS_URL=redis://localhost:6379
+   JWT_SECRET=your_jwt_secret
+   JWT_REFRESH_SECRET=your_refresh_secret
+   CLOUDINARY_CLOUD_NAME=your_cloud_name
+   CLOUDINARY_API_KEY=your_api_key
+   CLOUDINARY_API_SECRET=your_api_secret
+   EMAIL_HOST=smtp.gmail.com
+   EMAIL_PORT=587
+   EMAIL_USER=your_email
+   EMAIL_PASS=your_password
    ```
+4. Start the server:
+   ```bash
    npm start
    ```
 
@@ -61,7 +79,7 @@ The token is obtained by logging in or registering a new user.
 - **Input**:
   ```json
   {
-    "username": "string",
+    "fullName": "string",
     "email": "string",
     "password": "string"
   }
@@ -74,7 +92,7 @@ The token is obtained by logging in or registering a new user.
     "data": {
       "user": {
         "_id": "string",
-        "username": "string",
+        "fullName": "string",
         "email": "string",
         "createdAt": "date"
       }
@@ -102,105 +120,13 @@ The token is obtained by logging in or registering a new user.
     "data": {
       "user": {
         "_id": "string",
-        "username": "string",
-        "email": "string"
+        "fullName": "string",
+        "email": "string",
+        "avatar_url": "string"
       },
       "accessToken": "string",
       "refreshToken": "string"
     }
-  }
-  ```
-
-#### Verify Email
-
-- **URL**: `/user/verify-email`
-- **Method**: `GET`
-- **Auth required**: No
-- **Query Parameters**: `token=<verification-token>`
-- **Output**: Redirects to frontend with success/error message
-
-#### Logout
-
-- **URL**: `/user/logout`
-- **Method**: `POST`
-- **Auth required**: Yes
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Logged out successfully"
-  }
-  ```
-
-#### Logout from all devices
-
-- **URL**: `/user/logout-all`
-- **Method**: `POST`
-- **Auth required**: Yes
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Logged out from all devices"
-  }
-  ```
-
-#### Change Password
-
-- **URL**: `/user/change-password`
-- **Method**: `POST`
-- **Auth required**: Yes
-- **Input**:
-  ```json
-  {
-    "currentPassword": "string",
-    "newPassword": "string"
-  }
-  ```
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Password changed successfully"
-  }
-  ```
-
-#### Forgot Password
-
-- **URL**: `/user/forgot-password`
-- **Method**: `POST`
-- **Auth required**: No
-- **Input**:
-  ```json
-  {
-    "email": "string"
-  }
-  ```
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Password reset link sent to your email"
-  }
-  ```
-
-#### Reset Password
-
-- **URL**: `/user/reset-password`
-- **Method**: `POST`
-- **Auth required**: No
-- **Input**:
-  ```json
-  {
-    "token": "string",
-    "newPassword": "string"
-  }
-  ```
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Password reset successfully"
   }
   ```
 
@@ -213,14 +139,25 @@ The token is obtained by logging in or registering a new user.
   ```json
   {
     "_id": "string",
-    "username": "string",
+    "fullName": "string",
     "email": "string",
-    "profilePicture": "string",
+    "avatar_url": "string",
     "bio": "string",
     "createdAt": "date",
     "updatedAt": "date"
   }
   ```
+
+#### Update User Profile
+
+- **URL**: `/user/profile`
+- **Method**: `PUT`
+- **Auth required**: Yes
+- **Content-Type**: `multipart/form-data`
+- **Input**:
+  - `fullName`: string (optional)
+  - `bio`: string (optional)
+  - `avatar`: file (optional)
 
 ### Post Routes
 
@@ -233,7 +170,7 @@ The token is obtained by logging in or registering a new user.
 - **Input**:
   - `content`: string
   - `media`: file(s) (optional, max 10)
-  - `visibility`: string (public, friends, private)
+  - `privacy`: string (public, friends, private)
 - **Output**:
   ```json
   {
@@ -243,158 +180,92 @@ The token is obtained by logging in or registering a new user.
       "post": {
         "_id": "string",
         "content": "string",
-        "author": "string",
-        "media": ["string"],
-        "visibility": "string",
-        "createdAt": "date",
-        "updatedAt": "date"
+        "author": {
+          "_id": "string",
+          "fullName": "string",
+          "avatar_url": "string"
+        },
+        "media": [
+          {
+            "_id": "string",
+            "url": "string",
+            "type": "image|video",
+            "filename": "string"
+          }
+        ],
+        "privacy": "string",
+        "createdAt": "date"
       }
     }
   }
   ```
 
-#### Get All Posts by User
+#### Get Recommended Posts
 
-- **URL**: `/post`
+- **URL**: `/post/recommend`
 - **Method**: `GET`
 - **Auth required**: Yes
 - **Query Parameters**:
   - `page`: number (default: 1)
   - `limit`: number (default: 10)
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "data": {
-      "posts": [
-        {
-          "_id": "string",
-          "content": "string",
-          "author": {
-            "_id": "string",
-            "username": "string",
-            "profilePicture": "string"
-          },
-          "media": ["string"],
-          "visibility": "string",
-          "createdAt": "date",
-          "updatedAt": "date"
-        }
-      ],
-      "pagination": {
-        "totalPosts": "number",
-        "totalPages": "number",
-        "currentPage": "number",
-        "limit": "number"
-      }
-    }
-  }
-  ```
 
-#### Get Post by ID
+#### Get User Posts
 
-- **URL**: `/post/:id`
+- **URL**: `/post`
 - **Method**: `GET`
 - **Auth required**: Yes
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "data": {
-      "post": {
-        "_id": "string",
-        "content": "string",
-        "author": {
-          "_id": "string",
-          "username": "string",
-          "profilePicture": "string"
-        },
-        "media": ["string"],
-        "visibility": "string",
-        "createdAt": "date",
-        "updatedAt": "date"
-      }
-    }
-  }
-  ```
 
-#### Update Post
+#### React to Post
 
-- **URL**: `/post/:id`
-- **Method**: `PUT`
+- **URL**: `/post/reaction`
+- **Method**: `POST`
 - **Auth required**: Yes
 - **Input**:
   ```json
   {
-    "content": "string",
-    "visibility": "string"
-  }
-  ```
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Post updated successfully",
-    "data": {
-      "post": {
-        "_id": "string",
-        "content": "string",
-        "author": "string",
-        "media": ["string"],
-        "visibility": "string",
-        "updatedAt": "date"
-      }
-    }
+    "post_id": "string",
+    "reaction_type": "like|love|haha|wow|sad|angry"
   }
   ```
 
-#### Soft Delete Post
+#### Remove Post Reaction
 
-- **URL**: `/post/:id`
+- **URL**: `/post/reaction`
 - **Method**: `DELETE`
 - **Auth required**: Yes
-- **Output**:
+- **Input**:
   ```json
   {
-    "success": true,
-    "message": "Post moved to trash"
+    "post_id": "string"
   }
   ```
 
-#### Restore Post from Trash
+#### Get Post Reactions
 
-- **URL**: `/post/:id/restore`
-- **Method**: `PATCH`
-- **Auth required**: Yes
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Post restored successfully"
-  }
-  ```
-
-#### Get Trashed Posts
-
-- **URL**: `/post/trash`
+- **URL**: `/post/reactions/:postId`
 - **Method**: `GET`
 - **Auth required**: Yes
 - **Output**:
   ```json
   {
-    "success": true,
-    "data": {
-      "posts": [
-        {
+    "reactions": [
+      {
+        "_id": "string",
+        "user_id": {
           "_id": "string",
-          "content": "string",
-          "author": "string",
-          "media": ["string"],
-          "visibility": "string",
-          "deletedAt": "date"
-        }
-      ]
-    }
+          "fullName": "string",
+          "avatar_url": "string"
+        },
+        "type": "like|love|haha|wow|sad|angry",
+        "createdAt": "date"
+      }
+    ],
+    "counts": [
+      {
+        "_id": "like",
+        "count": 5
+      }
+    ]
   }
   ```
 
@@ -402,266 +273,32 @@ The token is obtained by logging in or registering a new user.
 
 #### Create a Comment
 
-- **URL**: `/comments`
+- **URL**: `/comment`
 - **Method**: `POST`
 - **Auth required**: Yes
+- **Content-Type**: `multipart/form-data`
 - **Input**:
-  ```json
-  {
-    "postId": "string",
-    "content": "string",
-    "parentId": "string" // Optional, for replies
-  }
-  ```
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Comment created successfully",
-    "data": {
-      "comment": {
-        "_id": "string",
-        "post_id": "string",
-        "user_id": {
-          "_id": "string",
-          "username": "string",
-          "avatar_url": "string"
-        },
-        "content": "string",
-        "parent_id": "string or null",
-        "created_at": "date",
-        "updated_at": "date"
-      }
-    }
-  }
-  ```
+  - `post_id`: string
+  - `content`: string
+  - `parent_comment_id`: string (optional, for replies)
+  - `media`: file(s) (optional)
 
 #### Get Comments for a Post
 
-- **URL**: `/comments/post/:postId`
+- **URL**: `/comment/:postId`
 - **Method**: `GET`
 - **Auth required**: Yes
-- **Query Parameters**:
-  - `page`: number (default: 1)
-  - `limit`: number (default: 10)
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "data": {
-      "comments": [
-        {
-          "_id": "string",
-          "post_id": "string",
-          "user_id": {
-            "_id": "string",
-            "username": "string",
-            "avatar_url": "string"
-          },
-          "content": "string",
-          "created_at": "date",
-          "updated_at": "date",
-          "replies": [
-            {
-              "_id": "string",
-              "post_id": "string",
-              "user_id": {
-                "_id": "string",
-                "username": "string",
-                "avatar_url": "string"
-              },
-              "content": "string",
-              "parent_id": "string",
-              "created_at": "date",
-              "updated_at": "date"
-            }
-          ]
-        }
-      ],
-      "pagination": {
-        "total": "number",
-        "page": "number",
-        "limit": "number",
-        "pages": "number"
-      }
-    }
-  }
-  ```
 
-#### Update a Comment
+#### React to Comment
 
-- **URL**: `/comments/:commentId`
-- **Method**: `PUT`
-- **Auth required**: Yes
-- **Input**:
-  ```json
-  {
-    "content": "string"
-  }
-  ```
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Comment updated successfully",
-    "data": {
-      "comment": {
-        "_id": "string",
-        "content": "string",
-        "updated_at": "date"
-      }
-    }
-  }
-  ```
-
-#### Delete a Comment
-
-- **URL**: `/comments/:commentId`
-- **Method**: `DELETE`
-- **Auth required**: Yes
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Comment deleted successfully"
-  }
-  ```
-
-### Like Routes
-
-#### Like a Post
-
-- **URL**: `/likes/post`
+- **URL**: `/comment/reaction`
 - **Method**: `POST`
 - **Auth required**: Yes
 - **Input**:
   ```json
   {
-    "postId": "string"
-  }
-  ```
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Post liked successfully",
-    "data": {
-      "likesCount": "number"
-    }
-  }
-  ```
-
-#### Unlike a Post
-
-- **URL**: `/likes/post/:postId`
-- **Method**: `DELETE`
-- **Auth required**: Yes
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Post unliked successfully",
-    "data": {
-      "likesCount": "number"
-    }
-  }
-  ```
-
-#### Get Users Who Liked a Post
-
-- **URL**: `/likes/post/:postId`
-- **Method**: `GET`
-- **Auth required**: Yes
-- **Query Parameters**:
-  - `page`: number (default: 1)
-  - `limit`: number (default: 10)
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "data": {
-      "likes": [
-        {
-          "_id": "string",
-          "username": "string",
-          "avatar_url": "string"
-        }
-      ],
-      "pagination": {
-        "total": "number",
-        "page": "number",
-        "limit": "number",
-        "pages": "number"
-      }
-    }
-  }
-  ```
-
-#### Like a Comment
-
-- **URL**: `/likes/comment`
-- **Method**: `POST`
-- **Auth required**: Yes
-- **Input**:
-  ```json
-  {
-    "commentId": "string"
-  }
-  ```
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Comment liked successfully",
-    "data": {
-      "likesCount": "number"
-    }
-  }
-  ```
-
-#### Unlike a Comment
-
-- **URL**: `/likes/comment/:commentId`
-- **Method**: `DELETE`
-- **Auth required**: Yes
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Comment unliked successfully",
-    "data": {
-      "likesCount": "number"
-    }
-  }
-  ```
-
-#### Get Users Who Liked a Comment
-
-- **URL**: `/likes/comment/:commentId`
-- **Method**: `GET`
-- **Auth required**: Yes
-- **Query Parameters**:
-  - `page`: number (default: 1)
-  - `limit`: number (default: 10)
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "data": {
-      "likes": [
-        {
-          "_id": "string",
-          "username": "string",
-          "avatar_url": "string"
-        }
-      ],
-      "pagination": {
-        "total": "number",
-        "page": "number",
-        "limit": "number",
-        "pages": "number"
-      }
-    }
+    "comment_id": "string",
+    "type": "like|love|haha|wow|sad|angry"
   }
   ```
 
@@ -675,23 +312,7 @@ The token is obtained by logging in or registering a new user.
 - **Input**:
   ```json
   {
-    "receiverId": "string"
-  }
-  ```
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Friend request sent",
-    "data": {
-      "friendship": {
-        "_id": "string",
-        "sender": "string",
-        "receiver": "string",
-        "status": "pending",
-        "createdAt": "date"
-      }
-    }
+    "user_id": "string"
   }
   ```
 
@@ -703,69 +324,7 @@ The token is obtained by logging in or registering a new user.
 - **Input**:
   ```json
   {
-    "status": "accepted" | "rejected"
-  }
-  ```
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Friend request accepted/rejected",
-    "data": {
-      "friendship": {
-        "_id": "string",
-        "sender": "string",
-        "receiver": "string",
-        "status": "string",
-        "updatedAt": "date"
-      }
-    }
-  }
-  ```
-
-#### Follow User
-
-- **URL**: `/follow`
-- **Method**: `POST`
-- **Auth required**: Yes
-- **Input**:
-  ```json
-  {
-    "userId": "string"
-  }
-  ```
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "User followed successfully",
-    "data": {
-      "follower": {
-        "_id": "string",
-        "follower": "string",
-        "following": "string",
-        "createdAt": "date"
-      }
-    }
-  }
-  ```
-
-#### Unfollow User
-
-- **URL**: `/unfollow`
-- **Method**: `DELETE`
-- **Auth required**: Yes
-- **Input**:
-  ```json
-  {
-    "userId": "string"
-  }
-  ```
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "User unfollowed successfully"
+    "action": "accept|decline"
   }
   ```
 
@@ -774,92 +333,214 @@ The token is obtained by logging in or registering a new user.
 - **URL**: `/friends`
 - **Method**: `GET`
 - **Auth required**: Yes
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "data": {
-      "friends": [
-        {
-          "_id": "string",
-          "username": "string",
-          "email": "string",
-          "profilePicture": "string"
-        }
-      ]
-    }
-  }
-  ```
 
 #### Get Incoming Friend Requests
 
 - **URL**: `/friend-requests/incoming`
 - **Method**: `GET`
 - **Auth required**: Yes
+
+#### Get Unfriended Users (Suggestions)
+
+- **URL**: `/unfriended-users`
+- **Method**: `GET`
+- **Auth required**: Yes
+
+### Channel & Chat Routes
+
+#### Get Chat List (User's Channels)
+
+- **URL**: `/chat/list`
+- **Method**: `GET`
+- **Auth required**: Yes
 - **Output**:
   ```json
   {
     "success": true,
-    "data": {
-      "requests": [
-        {
-          "_id": "string",
-          "sender": {
+    "data": [
+      {
+        "channelId": "string",
+        "type": "private|group",
+        "name": "string",
+        "avatar": "string",
+        "lastMessage": {
+          "content": "string",
+          "media": [],
+          "createdAt": "date",
+          "from": {
             "_id": "string",
-            "username": "string",
-            "profilePicture": "string"
+            "fullName": "string",
+            "avatar_url": "string"
           },
-          "status": "pending",
-          "createdAt": "date"
-        }
-      ]
-    }
+          "messageType": "user|system"
+        },
+        "unreadCount": 5,
+        "members": []
+      }
+    ]
   }
   ```
 
-#### Get Followers
+#### Get Channel Messages
 
-- **URL**: `/followers`
+- **URL**: `/chat/channel/:channelId/messages`
 - **Method**: `GET`
 - **Auth required**: Yes
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "data": {
-      "followers": [
-        {
-          "_id": "string",
-          "username": "string",
-          "email": "string",
-          "profilePicture": "string"
-        }
-      ]
-    }
-  }
-  ```
+- **Query Parameters**:
+  - `page`: number (default: 1)
+  - `limit`: number (default: 50)
 
-#### Get Followings
+#### Get or Create Private Channel
 
-- **URL**: `/followings`
+- **URL**: `/chat/private/:partnerId`
 - **Method**: `GET`
 - **Auth required**: Yes
-- **Output**:
+
+#### Mark Channel as Read
+
+- **URL**: `/chat/channel/:channelId/read`
+- **Method**: `PATCH`
+- **Auth required**: Yes
+
+#### Get Channel Info
+
+- **URL**: `/chat/channel/:channelId/info`
+- **Method**: `GET`
+- **Auth required**: Yes
+
+### Channel Management Routes
+
+#### Create Group Channel
+
+- **URL**: `/channel/group`
+- **Method**: `POST`
+- **Auth required**: Yes
+- **Input**:
   ```json
   {
-    "success": true,
-    "data": {
-      "followings": [
-        {
-          "_id": "string",
-          "username": "string",
-          "email": "string",
-          "profilePicture": "string"
-        }
-      ]
-    }
+    "name": "string",
+    "memberIds": ["string"],
+    "avatar": "string"
   }
   ```
+
+#### Update Group Name
+
+- **URL**: `/channel/:channelId/name`
+- **Method**: `PUT`
+- **Auth required**: Yes
+- **Input**:
+  ```json
+  {
+    "name": "string"
+  }
+  ```
+
+#### Add Member to Group
+
+- **URL**: `/channel/:channelId/members`
+- **Method**: `POST`
+- **Auth required**: Yes
+- **Input**:
+  ```json
+  {
+    "memberIds": ["string"]
+  }
+  ```
+
+#### Remove Member from Group
+
+- **URL**: `/channel/:channelId/members/:memberId`
+- **Method**: `DELETE`
+- **Auth required**: Yes
+
+#### Change Member Role
+
+- **URL**: `/channel/:channelId/members/:memberId/role`
+- **Method**: `PATCH`
+- **Auth required**: Yes
+- **Input**:
+  ```json
+  {
+    "role": "admin|member"
+  }
+  ```
+
+#### Delete Group Channel
+
+- **URL**: `/channel/:channelId`
+- **Method**: `DELETE`
+- **Auth required**: Yes
+
+#### Get User Channels
+
+- **URL**: `/channel/user`
+- **Method**: `GET`
+- **Auth required**: Yes
+
+#### Get Channel Details
+
+- **URL**: `/channel/:channelId`
+- **Method**: `GET`
+- **Auth required**: Yes
+
+### Group Routes
+
+#### Create Group
+
+- **URL**: `/group`
+- **Method**: `POST`
+- **Auth required**: Yes
+- **Content-Type**: `multipart/form-data`
+- **Input**:
+  - `name`: string
+  - `description`: string
+  - `privacy`: "public|private"
+  - `media`: file(s) (optional)
+
+#### Get All Groups
+
+- **URL**: `/group`
+- **Method**: `GET`
+- **Auth required**: Yes
+
+#### Get My Groups
+
+- **URL**: `/group/my`
+- **Method**: `GET`
+- **Auth required**: Yes
+
+#### Join Group
+
+- **URL**: `/group/:groupId/join`
+- **Method**: `POST`
+- **Auth required**: Yes
+
+#### Leave Group
+
+- **URL**: `/group/:groupId/leave`
+- **Method**: `POST`
+- **Auth required**: Yes
+
+### Media Routes
+
+#### Get User Images
+
+- **URL**: `/media/images/:userId`
+- **Method**: `GET`
+- **Auth required**: Yes
+
+#### Get User Videos
+
+- **URL**: `/media/videos/:userId`
+- **Method**: `GET`
+- **Auth required**: Yes
+
+#### Get User Media Stats
+
+- **URL**: `/media/stats/:userId`
+- **Method**: `GET`
+- **Auth required**: Yes
 
 ### Notification Routes
 
@@ -871,95 +552,30 @@ The token is obtained by logging in or registering a new user.
 - **Query Parameters**:
   - `page`: number (default: 1)
   - `limit`: number (default: 10)
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "data": {
-      "notifications": [
-        {
-          "_id": "string",
-          "user_id": "string",
-          "type": "string",
-          "content": "string",
-          "is_read": false,
-          "createdAt": "date",
-          "updatedAt": "date"
-        }
-      ],
-      "pagination": {
-        "total": "number",
-        "page": "number",
-        "limit": "number",
-        "pages": "number"
-      }
-    }
-  }
-  ```
 
 #### Get Unread Notifications Count
 
 - **URL**: `/notifications/unread-count`
 - **Method**: `GET`
 - **Auth required**: Yes
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "data": {
-      "count": "number"
-    }
-  }
-  ```
 
 #### Mark Notification as Read
 
 - **URL**: `/notifications/:notificationId/read`
 - **Method**: `PATCH`
 - **Auth required**: Yes
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Notification marked as read",
-    "data": {
-      "notification": {
-        "_id": "string",
-        "user_id": "string",
-        "type": "string",
-        "content": "string",
-        "is_read": true,
-        "updatedAt": "date"
-      }
-    }
-  }
-  ```
 
 #### Mark All Notifications as Read
 
 - **URL**: `/notifications/read-all`
 - **Method**: `PATCH`
 - **Auth required**: Yes
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "All notifications marked as read"
-  }
-  ```
 
 #### Delete Notification
 
 - **URL**: `/notifications/:notificationId`
 - **Method**: `DELETE`
 - **Auth required**: Yes
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "message": "Notification deleted successfully"
-  }
-  ```
 
 ### Token Routes
 
@@ -968,32 +584,22 @@ The token is obtained by logging in or registering a new user.
 - **URL**: `/refresh`
 - **Method**: `GET`
 - **Auth required**: No (requires refresh token in cookies)
-- **Output**:
-  ```json
-  {
-    "success": true,
-    "data": {
-      "accessToken": "string"
-    }
-  }
-  ```
 
 ## WebSocket API
 
-The application uses Socket.IO for real-time communication features.
+The application uses Socket.IO with namespaces for real-time communication.
 
-### Connection
+### Namespaces
 
-- Connect to the socket server:
-  ```javascript
-  const socket = io("server-url");
-  ```
+#### Messages Namespace (`/messages`)
 
-### Events
+Handle real-time messaging in channels.
 
-#### Register User
+##### Events
 
-- **Event**: `register`
+**Register for Messaging**
+
+- **Event**: `register_messaging`
 - **Data**:
   ```json
   {
@@ -1001,88 +607,134 @@ The application uses Socket.IO for real-time communication features.
   }
   ```
 
-#### Send Message
+**Join User Channels**
 
-- **Event**: `send-message`
+- **Event**: `join_channels`
 - **Data**:
   ```json
   {
-    "from": "string (userId)",
-    "to": "string (userId)",
+    "userId": "string"
+  }
+  ```
+
+**Send Channel Message**
+
+- **Event**: `send_channel_message`
+- **Data**:
+  ```json
+  {
+    "from": "string",
+    "channelId": "string",
     "content": "string",
-    "media": ["base64 encoded string"] // optional
+    "media": ["base64 string"] // optional
   }
   ```
 
-#### Receive Message
+**Receive Channel Message**
 
-- **Event**: `receive_message`
+- **Event**: `receive_channel_message`
 - **Data**:
   ```json
   {
-    "_id": "string",
-    "from": "string (userId)",
-    "to": "string (userId)",
-    "content": "string",
-    "media": ["string (urls)"],
-    "createdAt": "date"
-  }
-  ```
-
-#### Message Sent Confirmation
-
-- **Event**: `message-sent`
-- **Data**: Same as `receive_message`
-
-#### Error Message
-
-- **Event**: `error-message`
-- **Data**: `string` (error message)
-
-#### Send Notification
-- **Event**: `send-notification`
-- **Data**:
-  ```json
-  {
-    "userId": "string",
-    "type": "string",
-    "content": "string"
-  }
-  ```
-
-#### New Notification
-- **Event**: `new-notification`
-- **Data**:
-  ```json
-  {
-    "_id": "string",
-    "user_id": "string",
-    "type": "string",
-    "content": "string",
-    "is_read": false,
-    "createdAt": "date"
-  }
-  ```
-
-#### Notification Sent Confirmation
-- **Event**: `notification-sent`
-- **Data**:
-  ```json
-  {
-    "success": true,
-    "notification": {
+    "message": {
       "_id": "string",
-      "user_id": "string",
-      "type": "string",
+      "from": {
+        "_id": "string",
+        "fullName": "string",
+        "avatar_url": "string"
+      },
+      "channelId": "string",
       "content": "string",
-      "is_read": false,
+      "media": [],
+      "messageType": "user|system",
       "createdAt": "date"
+    },
+    "channel": {
+      "channelId": "string",
+      "type": "private|group",
+      "name": "string"
     }
   }
   ```
 
-#### Mark Notification as Read
-- **Event**: `mark-notification-read`
+**Typing Indicators**
+
+- **Event**: `typing_start`
+- **Data**:
+
+  ```json
+  {
+    "channelId": "string",
+    "userId": "string",
+    "userName": "string"
+  }
+  ```
+
+- **Event**: `typing_stop`
+- **Data**:
+  ```json
+  {
+    "channelId": "string",
+    "userId": "string"
+  }
+  ```
+
+**Mark Channel as Read**
+
+- **Event**: `mark_channel_read`
+- **Data**:
+  ```json
+  {
+    "channelId": "string",
+    "userId": "string"
+  }
+  ```
+
+**System Messages**
+
+- **Event**: `send_system_message`
+- **Data**:
+  ```json
+  {
+    "channelId": "string",
+    "action": "member_added|member_removed|group_renamed",
+    "fromUser": "string",
+    "targetUser": "string",
+    "oldValue": "string",
+    "newValue": "string"
+  }
+  ```
+
+#### Notifications Namespace (`/notifications`)
+
+Handle real-time notifications.
+
+##### Events
+
+**Register for Notifications**
+
+- **Event**: `register_notifications`
+- **Data**:
+  ```json
+  {
+    "userId": "string"
+  }
+  ```
+
+**Get Notifications**
+
+- **Event**: `get_notifications`
+- **Data**:
+  ```json
+  {
+    "limit": 20,
+    "skip": 0
+  }
+  ```
+
+**Mark Notification as Read**
+
+- **Event**: `mark_notification_read`
 - **Data**:
   ```json
   {
@@ -1090,53 +742,111 @@ The application uses Socket.IO for real-time communication features.
   }
   ```
 
-#### Notification Updated
-- **Event**: `notification-updated`
-- **Data**: Notification object with updated fields
+**Mark All Notifications as Read**
 
-#### Mark All Notifications as Read
-- **Event**: `mark-all-notifications-read`
-- **Data**:
-  ```json
-  {
-    "userId": "string"
-  }
-  ```
+- **Event**: `mark_all_notifications_read`
 
-#### All Notifications Updated
-- **Event**: `all-notifications-updated`
-- **Data**:
-  ```json
-  {
-    "success": true
-  }
-  ```
+**Receive Events**
 
-#### Get Notifications
-- **Event**: `get-notifications`
-- **Data**:
-  ```json
-  {
-    "userId": "string"
-  }
-  ```
+- **Event**: `notifications_list` - Array of notifications
+- **Event**: `unread_count_update` - Unread count number
+- **Event**: `new_notification` - New notification object
 
-#### Notifications List
-- **Event**: `notifications-list`
-- **Data**: Array of notification objects
+## Models
 
-#### Error Notification
-- **Event**: `error-notification`
-- **Data**: `string` (error message)
+### User Model
 
-#### Notifications Refresh Needed
-- **Event**: `notifications-refresh-needed`
-- **Description**: Notifies client to refresh notifications list
+```javascript
+{
+  _id: ObjectId,
+  fullName: String,
+  email: String (unique),
+  password: String (hashed),
+  avatar_url: String,
+  bio: String,
+  isEmailVerified: Boolean,
+  createdAt: Date,
+  updatedAt: Date
+}
+```
 
-#### Disconnect
+### Post Model
 
-- **Event**: `disconnect`
-- **Description**: Automatically handles cleaning up socket connections when a user disconnects
+```javascript
+{
+  _id: ObjectId,
+  content: String,
+  author: ObjectId (ref: User),
+  media: [MediaSchema],
+  privacy: String (public, friends, private),
+  comments_count: Number,
+  shares_count: Number,
+  createdAt: Date,
+  updatedAt: Date,
+  is_deleted: Boolean
+}
+```
+
+### Channel Model
+
+```javascript
+{
+  _id: ObjectId,
+  channelId: String (unique),
+  type: String (private, group),
+  name: String, // for groups only
+  avatar: String, // for groups only
+  members: [{
+    userId: ObjectId (ref: User),
+    role: String (admin, member),
+    joinedAt: Date,
+    isMuted: Boolean
+  }],
+  createdBy: String,
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+### Message Model
+
+```javascript
+{
+  _id: ObjectId,
+  from: ObjectId (ref: User),
+  channelId: String,
+  content: String,
+  media: [MediaSchema],
+  readBy: [{
+    userId: ObjectId (ref: User),
+    readAt: Date
+  }],
+  messageType: String (user, system),
+  systemMessageData: {
+    action: String,
+    targetUser: ObjectId (ref: User),
+    oldValue: String,
+    newValue: String
+  },
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+### Notification Model
+
+```javascript
+{
+  _id: ObjectId,
+  user_id: ObjectId (ref: User),
+  type: String,
+  content: String,
+  data: Object,
+  is_read: Boolean,
+  createdAt: Date,
+  updatedAt: Date
+}
+```
 
 ## License
 

@@ -1,3 +1,4 @@
+const channelModel = require("../models/Chat/channel.model");
 const Message = require("../models/message.model");
 const User = require("../models/user.model");
 
@@ -126,6 +127,8 @@ const markAsRead = async (req, res) => {
   }
 };
 
+
+      
 module.exports = {
   getChatList,
   getMessagesWithUser,
