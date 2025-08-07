@@ -86,7 +86,7 @@ const getMyGroups = async (req, res) => {
 const getGroupMembers = async (req, res) => {
     try {
         const { group_id } = req.params;
-        const members = await GroupMember.find({ group: group_id, status: "approved" }).populate("user", "username");
+        const members = await GroupMember.find({ group: group_id, status: "approved" }).populate("user", "username fullName avatar_url");
         res.status(200).json({ members });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -173,9 +173,42 @@ const getAllGroups = async (req, res) => {
 const getGroupDetail = async (req, res) => {
     try {
         const { group_id } = req.params;
+        const user_id = req.user._id;
+
         const group = await Group.findById(group_id);
         if (!group) return res.status(404).json({ error: "Group not found" });
-        res.status(200).json({ group });
+
+        // Lấy thống kê nhóm (members và posts)
+        const stats = await getGroupStats(group_id);
+
+        let isJoined = false;
+        let isAdmin = false;
+
+        // Kiểm tra trạng thái tham gia và quyền admin (chỉ khi đã đăng nhập)
+        if (user_id) {
+            const membership = await GroupMember.findOne({
+                group: group_id,
+                user: user_id,
+                status: "approved"
+            });
+
+            if (membership) {
+                isJoined = true;
+                isAdmin = membership.role === "admin";
+            }
+        }
+
+        res.status(200).json({
+            group: {
+                ...group.toObject(),
+                totalMembers: stats.totalMembers,
+                totalPosts: stats.totalPosts,
+                lastActivity: stats.lastActivity,
+                isJoined,
+                isAdmin
+            },
+
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

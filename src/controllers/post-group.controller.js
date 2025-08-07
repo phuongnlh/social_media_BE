@@ -86,28 +86,17 @@ const createGroupPost = async (req, res) => {
     }
 };
 
-// Lấy tất cả bài viết trong group, Nếu là admin thì lấy tất cả bài chưa xóa, nếu không thì chỉ lấy bài đã duyệt hoặc bài của chính mình
+// Lấy tất cả bài viết trong group
 const getAllPostsInGroup = async (req, res) => {
     try {
         const { group_id } = req.params;
-        const user_id = req.user._id;
 
-        // Kiểm tra quyền admin
-        const isAdmin = await isGroupAdmin(group_id, user_id);
-
-        // Nếu là admin: lấy tất cả bài chưa xóa
-        // Nếu không: chỉ lấy bài đã duyệt hoặc bài của chính mình
-        let query = { group_id, is_deleted: false };
-        if (!isAdmin) {
-            query["$or"] = [
-                { status: "approved" },
-                { user_id: user_id }
-            ];
-        }
+        // Chỉ lấy bài viết đã duyệt và chưa xóa
+        const query = { group_id, is_deleted: false, status: "approved" };
 
         const posts = await GroupPost.find(query)
             .sort({ created_at: -1 })
-            .populate("user_id", "username")
+            .populate("user_id", "username fullName avatar_url")
             .lean();
 
         const populatedPosts = await Promise.all(
