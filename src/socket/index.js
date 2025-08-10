@@ -16,8 +16,6 @@ module.exports = (io) => {
   // ===== MESSAGING NAMESPACE =====
   const messagesNamespace = io.of("/messages");
   messagesNamespace.on("connection", (socket) => {
-    console.log("User connected to messages namespace:", socket.id);
-
     // Đăng ký userId cho messaging socket
     socket.on("register_messaging", ({ userId }) => {
       socket.userId = userId.toString();
@@ -26,10 +24,6 @@ module.exports = (io) => {
         messageUserSocketMap.set(userId, new Set());
       }
       messageUserSocketMap.get(userId).add(socket.id);
-
-      console.log(
-        `User ${userId} registered for messaging with socket ${socket.id}`
-      );
     });
 
     // Xử lý gửi tin nhắn
@@ -51,6 +45,12 @@ module.exports = (io) => {
           channelId,
           content,
           media: mediaPayload,
+          readBy: [
+            {
+              userId: from, // Người gửi đã "đọc" message của chính họ
+              readAt: new Date(),
+            },
+          ],
         });
 
         // Tìm channel để lấy danh sách thành viên
@@ -58,6 +58,15 @@ module.exports = (io) => {
         if (!channel) {
           throw new Error("Channel không tồn tại");
         }
+
+        // Update channel's lastMessage và updatedAt
+        await Channel.findOneAndUpdate(
+          { channelId },
+          {
+            lastMessage: content || "Attachment sent",
+            updatedAt: new Date(),
+          }
+        );
 
         // Gửi tin nhắn cho tất cả thành viên trong channel (trừ người gửi)
         const recipientMembers = channel.members.filter(
@@ -151,15 +160,12 @@ module.exports = (io) => {
           messageUserSocketMap.delete(userId);
         }
       }
-      console.log("User disconnected from messages namespace:", socket.id);
     });
   });
 
   // ===== NOTIFICATIONS NAMESPACE =====
   const notificationsNamespace = io.of("/notifications");
   notificationsNamespace.on("connection", (socket) => {
-    console.log("User connected to notifications namespace:", socket.id);
-
     // Đăng ký userId cho notification socket
     socket.on("register_notifications", ({ userId }) => {
       socket.userId = userId.toString();
@@ -168,10 +174,6 @@ module.exports = (io) => {
         notificationUserSocketMap.set(userId, new Set());
       }
       notificationUserSocketMap.get(userId).add(socket.id);
-
-      console.log(
-        `User ${userId} registered for notifications with socket ${socket.id}`
-      );
 
       // Gửi số lượng thông báo chưa đọc khi kết nối
       notificationService
@@ -294,6 +296,169 @@ module.exports = (io) => {
       }
     });
 
+    // ===== CALL EVENTS =====
+
+    // Gửi thông báo call đến participants
+    socket.on("send_call_notification", async (data) => {
+      try {
+        const {
+          channelId,
+          callType,
+          callerInfo,
+          participants,
+          chatType,
+          chatInfo,
+        } = data;
+        const callerId = socket.userId;
+
+        // Gửi call notification đến từng participant
+        for (const participantId of participants) {
+          if (participantId.toString() !== callerId) {
+            // Tạo notification message dựa trên loại chat
+            const isGroupCall = chatType === "group";
+            const notificationMessage = isGroupCall
+              ? `${callerInfo.name} đang gọi ${
+                  callType === "video" ? "video" : "thoại"
+                } nhóm ${chatInfo?.name || "Nhóm"}`
+              : `${callerInfo.name} đang gọi ${
+                  callType === "video" ? "video" : "thoại"
+                }`;
+
+            // Tạo notification trong database
+            const notification =
+              await notificationService.createNotificationWithNamespace(
+                notificationsNamespace,
+                participantId,
+                "incoming_call",
+                notificationMessage,
+                notificationUserSocketMap,
+                {
+                  callData: {
+                    channelId,
+                    callType,
+                    callerInfo,
+                    chatType,
+                    chatInfo,
+                    timestamp: Date.now(),
+                  },
+                }
+              );
+
+            // Gửi real-time call notification
+            const participantSocketIds = notificationUserSocketMap.get(
+              participantId.toString()
+            );
+            if (participantSocketIds) {
+              for (const participantSocketId of participantSocketIds) {
+                notificationsNamespace
+                  .to(participantSocketId)
+                  .emit("incoming_call", {
+                    channelId,
+                    callType,
+                    callerInfo,
+                    chatType,
+                    chatInfo,
+                    notificationId: notification._id,
+                    timestamp: Date.now(),
+                  });
+              }
+            }
+          }
+        }
+
+        socket.emit("call_notification_sent", { success: true });
+      } catch (err) {
+        console.error("Send call notification error:", err);
+        socket.emit("call_notification_error", "Không thể gửi thông báo call");
+      }
+    });
+
+    // Join call - thông báo đã tham gia call
+    socket.on("join_call", async (data) => {
+      try {
+        const { channelId, userInfo } = data;
+        const userId = socket.userId;
+
+        // Thông báo cho các users khác trong call
+        notificationsNamespace.emit("user_joined_call", {
+          channelId,
+          userInfo,
+          userId,
+        });
+      } catch (err) {
+        console.error("Join call error:", err);
+      }
+    });
+
+    // Call rejected - thông báo cuộc gọi bị từ chối
+    socket.on("call_rejected", async (data) => {
+      try {
+        const { channelId, rejectedBy, callerInfo } = data;
+
+        // Thông báo cho người gọi rằng cuộc gọi bị từ chối
+        const callerSocketIds = notificationUserSocketMap.get(
+          callerInfo.id.toString()
+        );
+        if (callerSocketIds) {
+          for (const callerSocketId of callerSocketIds) {
+            notificationsNamespace.to(callerSocketId).emit("call_ended", {
+              channelId,
+              endedBy: rejectedBy,
+              reason: "rejected",
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Call rejected error:", err);
+      }
+    });
+
+    // Leave call - thông báo đã rời call
+    socket.on("leave_call", async (data) => {
+      try {
+        const { channelId, userInfo } = data;
+        const userId = socket.userId;
+
+        // Thông báo cho các users khác trong call
+        notificationsNamespace.emit("user_left_call", {
+          channelId,
+          userInfo,
+          userId,
+        });
+      } catch (err) {
+        console.error("Leave call error:", err);
+      }
+    });
+
+    // End call - kết thúc call cho tất cả
+    socket.on("end_call", async (data) => {
+      try {
+        const { channelId, participants } = data;
+        const userId = socket.userId;
+
+        // Thông báo kết thúc call cho tất cả participants
+        for (const participantId of participants) {
+          if (participantId.toString() !== userId) {
+            const participantSocketIds = notificationUserSocketMap.get(
+              participantId.toString()
+            );
+            if (participantSocketIds) {
+              for (const participantSocketId of participantSocketIds) {
+                notificationsNamespace
+                  .to(participantSocketId)
+                  .emit("call_ended", {
+                    channelId,
+                    endedBy: userId,
+                  });
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("End call error:", err);
+      }
+    });
+
     // Xử lý disconnect cho notifications
     socket.on("disconnect", () => {
       const userId = socket.userId;
@@ -304,7 +469,6 @@ module.exports = (io) => {
           notificationUserSocketMap.delete(userId);
         }
       }
-      console.log("User disconnected from notifications namespace:", socket.id);
     });
   });
 };

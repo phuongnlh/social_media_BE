@@ -160,8 +160,7 @@ const respondFriendRequest = async (req, res) => {
 
 // Lấy danh sách bạn bè
 const getFriendsList = async (req, res) => {
-  const userId = req.user._id;
-
+  const userId = req.params.userId;
   try {
     // Tìm tất cả các mối quan hệ bạn bè đã được chấp nhận mà người dùng hiện tại tham gia
     const friends = await Friendship.find({

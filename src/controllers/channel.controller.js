@@ -55,7 +55,7 @@ const createPrivateChannel = async (req, res) => {
 // Tạo channel Group với nhiều thành viên
 const createGroupChannel = async (req, res) => {
   try {
-    const { name, memberIds, avatar } = req.body;
+    const { name, memberIds } = req.body;
     const createdBy = req.user._id.toString();
 
     // Tạo channelId unique
@@ -74,6 +74,9 @@ const createGroupChannel = async (req, res) => {
         }
       });
     }
+    const avatar = req.file
+      ? req.file.path
+      : "https://res.cloudinary.com/doxtbwyyc/image/upload/v1754065338/image_copy_yjz7dz.png";
 
     const channel = await channelModel.create({
       channelId,
@@ -344,10 +347,38 @@ const getUserChannels = async (req, res) => {
       .populate("members.userId", "fullName avatar_url email")
       .sort({ updatedAt: -1 });
 
+    // Tính số tin nhắn chưa đọc cho mỗi channel
+    const channelsWithUnreadCount = await Promise.all(
+      channels.map(async (channel) => {
+        try {
+          // Đếm số tin nhắn trong channel mà user chưa đọc
+          const unreadCount = await messageModel.countDocuments({
+            channelId: channel.channelId,
+            from: { $ne: userId }, // Không tính tin nhắn của chính user
+            "readBy.userId": { $ne: userId }, // User chưa đọc
+          });
+
+          return {
+            ...channel.toObject(),
+            unreadCount: unreadCount || 0,
+          };
+        } catch (error) {
+          console.error(
+            `Error calculating unread for channel ${channel.channelId}:`,
+            error
+          );
+          return {
+            ...channel.toObject(),
+            unreadCount: 0,
+          };
+        }
+      })
+    );
+
     res.status(200).json({
       success: true,
       message: "User channels retrieved successfully",
-      data: channels,
+      data: channelsWithUnreadCount,
     });
   } catch (error) {
     res.status(500).json({
@@ -590,10 +621,13 @@ const leaveGroupChannel = async (req, res) => {
 const getChannelChatList = async (req, res) => {
   try {
     const currentUserId = req.user._id;
-    
-    const channels = await channelModel.find({
-      members: currentUserId,
-    }).populate("members", "fullName avatar_url").sort({ updatedAt: -1 });
+
+    const channels = await channelModel
+      .find({
+        members: currentUserId,
+      })
+      .populate("members", "fullName avatar_url")
+      .sort({ updatedAt: -1 });
 
     res.status(200).json({
       success: true,
@@ -613,10 +647,152 @@ const getChannelChatList = async (req, res) => {
 const getChannelMessages = async (req, res) => {
   try {
     const { channelId } = req.params;
-    const messages = await messageModel.find({ channelId }).sort({ createdAt: 1 });
+    const messages = await messageModel
+      .find({ channelId })
+      .sort({ createdAt: 1 });
     res.json({ success: true, messages });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// Lấy số tin nhắn chưa đọc của một channel cụ thể
+const getChannelUnreadCount = async (req, res) => {
+  try {
+    const { channelId } = req.params;
+    const userId = req.user._id.toString();
+
+    // Kiểm tra user có quyền truy cập channel không
+    const channel = await channelModel.findOne({
+      channelId,
+      "members.userId": userId,
+    });
+
+    if (!channel) {
+      return res.status(404).json({
+        success: false,
+        message: "Channel not found or access denied",
+      });
+    }
+
+    // Đếm số tin nhắn chưa đọc
+    const unreadCount = await messageModel.countDocuments({
+      channelId,
+      from: { $ne: userId }, // Không tính tin nhắn của chính user
+      "readBy.userId": { $ne: userId }, // User chưa đọc
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Unread count retrieved successfully",
+      data: { channelId, unreadCount },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error retrieving unread count",
+      error: error.message,
+    });
+  }
+};
+
+// Lấy số tin nhắn chưa đọc của tất cả channels
+const getAllChannelsUnreadCount = async (req, res) => {
+  try {
+    const userId = req.user._id.toString();
+
+    // Lấy tất cả channels của user
+    const channels = await channelModel.find({
+      "members.userId": userId,
+    });
+
+    const unreadCounts = {};
+
+    // Tính unread count cho từng channel
+    await Promise.all(
+      channels.map(async (channel) => {
+        try {
+          const unreadCount = await messageModel.countDocuments({
+            channelId: channel.channelId,
+            from: { $ne: userId },
+            "readBy.userId": { $ne: userId },
+          });
+          unreadCounts[channel.channelId] = unreadCount;
+        } catch (error) {
+          console.error(
+            `Error calculating unread for ${channel.channelId}:`,
+            error
+          );
+          unreadCounts[channel.channelId] = 0;
+        }
+      })
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "All channels unread counts retrieved successfully",
+      data: unreadCounts,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error retrieving unread counts",
+      error: error.message,
+    });
+  }
+};
+
+// Đánh dấu tất cả tin nhắn trong channel là đã đọc
+const markChannelAsRead = async (req, res) => {
+  try {
+    const { channelId } = req.params;
+    const userId = req.user._id.toString();
+
+    // Kiểm tra user có quyền truy cập channel không
+    const channel = await channelModel.findOne({
+      channelId,
+      "members.userId": userId,
+    });
+
+    if (!channel) {
+      return res.status(404).json({
+        success: false,
+        message: "Channel not found or access denied",
+      });
+    }
+
+    // Cập nhật tất cả tin nhắn chưa đọc thành đã đọc
+    const result = await messageModel.updateMany(
+      {
+        channelId,
+        from: { $ne: userId }, // Không update tin nhắn của chính user
+        "readBy.userId": { $ne: userId }, // Chỉ update những tin nhắn chưa đọc
+      },
+      {
+        $addToSet: {
+          // Sử dụng $addToSet thay vì $push để tránh duplicate
+          readBy: {
+            userId: userId,
+            readAt: new Date(),
+          },
+        },
+      }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Channel marked as read successfully",
+      data: {
+        channelId,
+        messagesMarked: result.modifiedCount,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error marking channel as read",
+      error: error.message,
+    });
   }
 };
 
@@ -634,4 +810,7 @@ module.exports = {
   getUserChannels,
   getChannelDetails,
   changeMemberRole,
+  getChannelUnreadCount,
+  getAllChannelsUnreadCount,
+  markChannelAsRead,
 };

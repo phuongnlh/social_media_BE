@@ -2,13 +2,19 @@ const express = require("express");
 const router = express.Router();
 const { isLogin } = require("../middlewares/auth");
 const channelController = require("../controllers/channel.controller");
+const { upload } = require("../utils/upload_utils");
 
 // Get all channels
 router.get("/all", isLogin, channelController.getChannelChatList);
 
 // Channel Management Routes
 router.post("/private", isLogin, channelController.createPrivateChannel);
-router.post("/group", isLogin, channelController.createGroupChannel);
+router.post(
+  "/group",
+  isLogin,
+  upload.single("avatar"),
+  channelController.createGroupChannel
+);
 router.get("/", isLogin, channelController.getUserChannels);
 router.get("/:channelId", isLogin, channelController.getChannelDetails);
 
@@ -28,7 +34,26 @@ router.put(
   channelController.changeMemberRole
 );
 router.delete("/:channelId", isLogin, channelController.deleteGroupChannel);
+// Unread Count Management (put specific routes first)
+router.get("/unread/all", isLogin, channelController.getAllChannelsUnreadCount);
+
 // Get messages in a channel
-router.get("/:channelId/messages", isLogin, channelController.getChannelMessages);
+router.get(
+  "/:channelId/messages",
+  isLogin,
+  channelController.getChannelMessages
+);
+
+// More specific unread routes
+router.get(
+  "/:channelId/unread",
+  isLogin,
+  channelController.getChannelUnreadCount
+);
+router.post(
+  "/:channelId/mark-read",
+  isLogin,
+  channelController.markChannelAsRead
+);
 
 module.exports = router;
