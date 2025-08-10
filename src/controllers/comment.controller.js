@@ -12,6 +12,23 @@ const {
 } = require("../socket/io-instance");
 
 //* Comment:
+// Đếm số lượng bình luận của một bài viết
+const getGroupPostCommentCount = async (req, res) => {
+    try {
+        const { postgr_id } = req.params;
+        
+        const count = await Comment.countDocuments({ 
+            postgr_id, 
+            isDeleted: false 
+        });
+        
+        res.status(200).json({ count });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+
 // Tạo bình luận mới
 const createComment = async (req, res) => {
   try {
@@ -117,37 +134,31 @@ const getCommentsOfPost = async (req, res) => {
   try {
     const { post_id, postgr_id } = req.params;
 
-    let filter = { isDeleted: false };
-    if (post_id) filter.post_id = post_id;
-    if (postgr_id) filter.postgr_id = postgr_id;
+        let filter = { isDeleted: false };
 
-    // Lấy tất cả comment của post
-    const comments = await Comment.find({ post_id, isDeleted: false })
-      .populate("user_id", "fullName avatar_url")
-      .sort({ createdAt: 1 });
+        if (post_id) filter.post_id = new mongoose.Types.ObjectId(post_id);
+        if (postgr_id) filter.postgr_id = new mongoose.Types.ObjectId(postgr_id);
 
-    // Biến flat array thành cây
-    const commentMap = {};
-    const roots = [];
+        const comments = await Comment.find(filter)
+            .populate("user_id", "fullName avatar_url")
+            .sort({ createdAt: 1 });
 
-    // Tạo map từ _id -> comment
-    comments.forEach((comment) => {
-      comment = comment.toObject();
-      comment.replies = [];
-      commentMap[comment._id] = comment;
-    });
+        const commentMap = {};
+        const roots = [];
 
-    // Gán reply vào parent
-    comments.forEach((comment) => {
-      if (comment.parent_comment_id) {
-        const parent = commentMap[comment.parent_comment_id];
-        if (parent) {
-          parent.replies.push(commentMap[comment._id]);
-        }
-      } else {
-        roots.push(commentMap[comment._id]);
-      }
-    });
+        comments.forEach(comment => {
+            comment = comment.toObject();
+            comment.replies = [];
+            commentMap[comment._id] = comment;
+        });
+
+        comments.forEach(comment => {
+            if (comment.parent_comment_id && commentMap[comment.parent_comment_id]) {
+                commentMap[comment.parent_comment_id].replies.push(commentMap[comment._id]);
+            } else {
+                roots.push(commentMap[comment._id]);
+            }
+        });
 
     res.status(200).json({ comments: roots });
   } catch (err) {
@@ -351,14 +362,15 @@ const getUserReactionsForComments = async (req, res) => {
 };
 
 module.exports = {
-  createComment,
-  getCommentsOfPost,
-  editComment,
-  softDeleteComment,
-  restoreComment,
-  reactToComment,
-  removeCommentReaction,
-  getReactionsOfComment,
-  getUserReactionsForComments,
-  countCommentsOfPost,
+    createComment,
+    getCommentsOfPost,
+    editComment,
+    softDeleteComment,
+    restoreComment,
+    reactToComment,
+    removeCommentReaction,
+    getReactionsOfComment,
+    getUserReactionsForComments,
+    getGroupPostCommentCount,
+    countCommentsOfPost
 };

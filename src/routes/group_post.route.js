@@ -9,6 +9,7 @@ router.post("/reaction", isLogin, groupPostController.reactToGroupPost); // Tạ
 router.delete("/reaction", isLogin, groupPostController.removeGroupPostReaction); // Xoá reaction của user với group post
 router.post("/user-reactions", isLogin, groupPostController.getUserReactionsForGroupPosts); // Lấy reaction của user với nhiều group post (có thể truyền 1 hoặc nhiều postgr_ids)
 
+router.get("/feed", isLogin, groupPostController.getGroupFeed); // Lấy feed bài viết từ tất cả group mà user đã tham gia
 router.post("/share", isLogin, groupPostController.shareGroupPostToWall); // Chia sẻ bài viết trong group lên tường cá nhân
 router.get("/reactions/:postgr_id", isLogin, groupPostController.getReactionsOfGroupPost); // Lấy tất cả reaction của group post
 router.patch("/:post_id/restore", isLogin, groupPostController.restoreGroupPost); // Khôi phục bài viết đã xoá
@@ -23,6 +24,5 @@ router.get("/:group_id/:post_id", isLogin, groupPostController.getGroupPostById)
 router.get("/:group_id", isLogin, groupPostController.getAllPostsInGroup); // Lấy tất cả bài viết trong group
 router.put("/:post_id", isLogin, groupPostController.updateGroupPost); // Cập nhật bài viết trong group
 router.delete("/:post_id", isLogin, groupPostController.softDeleteGroupPost); // Xoá bài viết trong group (chỉ đánh dấu là đã xoá)
-
 
 module.exports = router;

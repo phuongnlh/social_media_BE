@@ -9,8 +9,8 @@ router.post("/", isLogin, uploadGroup.array("media", 1), groupController.createG
 router.get("/my-groups", isLogin, groupController.getMyGroups); // Lấy danh sách group đã tham gia
 router.post("/request-join", isLogin, groupController.requestJoinGroup); // Gửi yêu cầu tham gia group
 router.post("/leave", isLogin, groupController.leaveGroup); // Rời group
-router.get("/get-groups", groupController.getAllGroups); // Lấy tất cả group
-router.get("/get-group/:group_id", groupController.getGroupDetail); // Lấy thông tin group theo ID
+router.get("/get-groups", isLogin,groupController.getAllGroups); // Lấy tất cả group
+router.get("/get-group/:group_id", isLogin, groupController.getGroupDetail); // Lấy thông tin group theo ID
 router.get("/members/:group_id", isLogin, groupController.getGroupMembers); // Lấy danh sách thành viên
 
 // Dành cho quản trị viên của group
