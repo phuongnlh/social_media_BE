@@ -4,11 +4,13 @@ const Notification = require("../models/notification.model");
 const { uploadToCloudinary } = require("../utils/upload_utils");
 const notificationService = require("../services/notification.service");
 const { setSocketIO } = require("./io-instance");
+const redisClient = require("../config/database.redis");
+const dayjs = require("dayjs");
 
 const userSocketMap = new Map(); // userId => socket.id
 const messageUserSocketMap = new Map(); // userId => socket.id cho messaging
 const notificationUserSocketMap = new Map(); // userId => socket.id cho notifications
-
+const userRefreshTokensSet = `user-online`;
 module.exports = (io) => {
   // Make IO instance available globally
   setSocketIO(io, userSocketMap, notificationUserSocketMap);
@@ -17,8 +19,14 @@ module.exports = (io) => {
   const messagesNamespace = io.of("/messages");
   messagesNamespace.on("connection", (socket) => {
     // Đăng ký userId cho messaging socket
-    socket.on("register_messaging", ({ userId }) => {
+    socket.on("register_messaging", async ({ userId }) => {
       socket.userId = userId.toString();
+
+      // Lưu socketId -> userId
+      await redisClient.sAdd(`user:online:${userId}`, socket.id);
+
+      // Đánh dấu user đang online
+      await redisClient.sAdd("online_users", userId);
 
       if (!messageUserSocketMap.has(userId)) {
         messageUserSocketMap.set(userId, new Set());
@@ -53,6 +61,11 @@ module.exports = (io) => {
           ],
         });
 
+        const newMessage = await Message.findById(message._id).populate(
+          "from",
+          "fullName avatar_url"
+        );
+
         // Tìm channel để lấy danh sách thành viên
         const channel = await Channel.findOne({ channelId });
         if (!channel) {
@@ -75,7 +88,7 @@ module.exports = (io) => {
 
         // Thêm thông tin channel vào message để client biết message thuộc kênh nào
         const messageWithChannel = {
-          ...message.toObject(),
+          ...newMessage.toObject(),
           channelType: channel.type,
           channelName: channel.name,
         };
@@ -90,45 +103,6 @@ module.exports = (io) => {
               messagesNamespace
                 .to(socketId)
                 .emit("receive_message", messageWithChannel);
-            }
-          }
-
-          // Tạo thông báo cho thành viên (chỉ khi họ không bị mute)
-          if (!member.isMuted) {
-            try {
-              const notiWithUser = await message.populate(
-                "from",
-                "fullName avatar_url"
-              );
-              const notificationsNamespace = io.of("/notifications");
-
-              // Tạo nội dung thông báo khác nhau cho kênh riêng tư và nhóm
-              let notificationContent = "";
-              if (channel.type === "private") {
-                notificationContent = `${notiWithUser.from?.fullName} đã gửi cho bạn một tin nhắn mới`;
-              } else {
-                notificationContent = `${
-                  notiWithUser.from?.fullName
-                } đã gửi tin nhắn trong nhóm ${channel.name || "Group chat"}`;
-              }
-
-              await notificationService.createNotificationWithNamespace(
-                notificationsNamespace,
-                memberId,
-                "message",
-                notificationContent,
-                notificationUserSocketMap,
-                {
-                  messageId: message._id,
-                  fromUser: from,
-                  channelId: channelId,
-                }
-              );
-            } catch (notifyErr) {
-              console.error(
-                "Failed to create message notification:",
-                notifyErr
-              );
             }
           }
         }
@@ -151,14 +125,34 @@ module.exports = (io) => {
     });
 
     // Xử lý disconnect cho messaging
-    socket.on("disconnect", () => {
+    socket.on("disconnect", async () => {
       const userId = socket.userId;
-      if (userId && messageUserSocketMap.has(userId)) {
+      if (!userId) return;
+
+      // Xóa socket id khỏi Redis
+      await redisClient.sRem(`user:online:${userId}`, socket.id);
+
+      if (messageUserSocketMap.has(userId)) {
         const sockets = messageUserSocketMap.get(userId);
         sockets.delete(socket.id);
         if (sockets.size === 0) {
           messageUserSocketMap.delete(userId);
         }
+      }
+
+      const stillOnline = await redisClient.sCard(`user:online:${userId}`);
+      if (stillOnline === 0) {
+        // Xóa khỏi danh sách online
+        await redisClient.sRem("online_users", userId);
+
+        // Ghi last active (ISO string hoặc timestamp)
+        await redisClient.hSet(
+          "user:lastActive",
+          userId,
+          dayjs().toISOString()
+        );
+
+        console.log(`❌ User ${userId} offline, last active saved`);
       }
     });
   });
@@ -324,26 +318,6 @@ module.exports = (io) => {
                   callType === "video" ? "video" : "thoại"
                 }`;
 
-            // Tạo notification trong database
-            const notification =
-              await notificationService.createNotificationWithNamespace(
-                notificationsNamespace,
-                participantId,
-                "incoming_call",
-                notificationMessage,
-                notificationUserSocketMap,
-                {
-                  callData: {
-                    channelId,
-                    callType,
-                    callerInfo,
-                    chatType,
-                    chatInfo,
-                    timestamp: Date.now(),
-                  },
-                }
-              );
-
             // Gửi real-time call notification
             const participantSocketIds = notificationUserSocketMap.get(
               participantId.toString()
@@ -358,7 +332,6 @@ module.exports = (io) => {
                     callerInfo,
                     chatType,
                     chatInfo,
-                    notificationId: notification._id,
                     timestamp: Date.now(),
                   });
               }

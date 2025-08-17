@@ -498,8 +498,35 @@ const getbannedMemberList = async (req, res) => {
     }
 }
 
-
-
+// Lấy danh sách group đã tham gia theo user_id
+const getUserGroups = async (req, res) => {
+    try {
+        const user_id = req.params.user_id;
+        const memberships = await GroupMember.find({
+          user: user_id,
+          status: "approved",
+        }).populate("group");
+        if (!memberships.length) {
+          return res
+            .status(200)
+            .json({ message: "You haven't joined any groups yet", groups: [] });
+        }
+        const groupsWithStats = await Promise.all(
+          memberships.map(async (m) => {
+            const stats = await getGroupStats(m.group._id);
+            return {
+              ...m.group.toObject(),
+              role: m.role,
+              ...stats,
+              lastActivity: stats.lastActivity || m.group.created_at,
+            };
+          })
+        );
+        res.status(200).json({ groups: groupsWithStats });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
 
 module.exports = {
     createGroup,
@@ -518,5 +545,6 @@ module.exports = {
     unbanMember,
     restrictMember,
     getRestrictMemberList,
-    getbannedMemberList
+    getbannedMemberList,
+    getUserGroups
 };

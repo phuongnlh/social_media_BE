@@ -14,7 +14,7 @@ const io = new Server(server, {
       "http://localhost:5173",
       "http://127.0.0.1:5173",
       "http://192.168.21.145:5173",
-      "https://18fb5fb85b31.ngrok-free.app",
+      "https://74027a3132cc.ngrok-free.app",
     ], // Allow Vite dev server
     methods: ["GET", "POST"],
     credentials: true, // Allow cookies

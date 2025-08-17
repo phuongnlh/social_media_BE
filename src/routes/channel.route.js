@@ -15,12 +15,18 @@ router.post(
   upload.single("avatar"),
   channelController.createGroupChannel
 );
+router.get("/online-status", isLogin, channelController.getUserOnlineStatus);
 router.get("/", isLogin, channelController.getUserChannels);
 router.get("/:channelId", isLogin, channelController.getChannelDetails);
 
 // Group Channel Management
 router.put("/:channelId/name", isLogin, channelController.updateGroupName);
-router.put("/:channelId/avatar", isLogin, channelController.updateGroupAvatar);
+router.put(
+  "/:channelId/avatar",
+  isLogin,
+  upload.single("avatar"),
+  channelController.updateGroupAvatar
+);
 router.post("/:channelId/members", isLogin, channelController.addMemberToGroup);
 router.delete(
   "/:channelId/members/:memberId",
@@ -55,5 +61,7 @@ router.post(
   isLogin,
   channelController.markChannelAsRead
 );
+
+router.put("/:channelId/mute", isLogin, channelController.muteGroupChat);
 
 module.exports = router;

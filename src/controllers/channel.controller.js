@@ -1,4 +1,6 @@
+const redisClient = require("../config/database.redis");
 const channelModel = require("../models/Chat/channel.model");
+const friendshipModel = require("../models/friendship.model");
 const messageModel = require("../models/message.model");
 
 // Tạo channel Private 1-1
@@ -515,7 +517,6 @@ const changeMemberRole = async (req, res) => {
 const updateGroupAvatar = async (req, res) => {
   try {
     const { channelId } = req.params;
-    const { avatar } = req.body;
     const userId = req.user._id.toString();
 
     const channel = await channelModel.findOne({ channelId });
@@ -539,6 +540,13 @@ const updateGroupAvatar = async (req, res) => {
       return res.status(403).json({
         success: false,
         message: "Only admins can update group avatar",
+      });
+    }
+    const avatar = req.file.path;
+    if (!avatar) {
+      return res.status(400).json({
+        success: false,
+        message: "No avatar file uploaded",
       });
     }
 
@@ -591,7 +599,7 @@ const leaveGroupChannel = async (req, res) => {
     // Kiểm tra nếu là admin duy nhất
     const admins = channel.members.filter((m) => m.role === "admin");
     if (member.role === "admin" && admins.length === 1) {
-      return res.status(400).json({
+      return res.status(403).json({
         success: false,
         message:
           "Cannot leave as the last admin. Transfer admin role first or delete the group.",
@@ -647,12 +655,70 @@ const getChannelChatList = async (req, res) => {
 const getChannelMessages = async (req, res) => {
   try {
     const { channelId } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+
+    const skip = (page - 1) * parseInt(limit);
+
+    // Get total count for pagination info
+    const totalMessages = await messageModel.countDocuments({ channelId });
+
+    // Get messages sorted by newest first, then reverse for display
     const messages = await messageModel
       .find({ channelId })
-      .sort({ createdAt: 1 });
-    res.json({ success: true, messages });
+      .populate("from", "fullName avatar_url")
+      .sort({ createdAt: -1 }) // Newest first for pagination
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    res.json({
+      success: true,
+      messages: messages.reverse(), // Reverse to show oldest first in the batch
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(totalMessages / parseInt(limit)),
+        totalMessages,
+        hasMore: skip + messages.length < totalMessages,
+      },
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+const muteGroupChat = async (req, res) => {
+  try {
+    const { channelId } = req.params;
+    const { state } = req.body;
+    const userId = req.user._id.toString();
+
+    // Kiểm tra user có quyền truy cập channel không
+    const channel = await channelModel.findOne({
+      channelId,
+      "members.userId": userId,
+    });
+
+    if (!channel) {
+      return res.status(404).json({
+        success: false,
+        message: "Channel not found or access denied",
+      });
+    }
+
+    await channelModel.updateOne(
+      { channelId, "members.userId": userId },
+      { $set: { "members.$.isMuted": state } }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Update successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error muting group",
+      error: error.message,
+    });
   }
 };
 
@@ -796,6 +862,54 @@ const markChannelAsRead = async (req, res) => {
   }
 };
 
+const getUserOnlineStatus = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const listIds = await channelModel.find(
+      { members: { $elemMatch: { userId } } },
+      { members: 1 }
+    );
+
+    if (!listIds || listIds.length === 0) return [];
+
+    const listFriendIds = [
+      ...new Set(
+        listIds
+          .flatMap((doc) => doc.members.map((m) => m.userId.toString()))
+          .filter((id) => id !== userId.toString())
+      ),
+    ];
+
+    // Dùng pipeline để check online
+    const pipeline = redisClient.multi();
+    listFriendIds.forEach((fid) => {
+      pipeline.sIsMember("online_users", String(fid));
+      pipeline.hGet("user:lastActive", fid);
+    });
+
+    const results = await pipeline.exec();
+
+    const onlineStatuses = listFriendIds.map((fid, index) => ({
+      friendId: fid,
+      isOnline: results[index * 2] === 1,
+      lastActive: results[index * 2 + 1] || null,
+    }));
+
+    res.status(200).json({
+      success: true,
+      message: "User online status retrieved successfully",
+      data: { userId, onlineStatuses },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error retrieving user online status",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   createPrivateChannel,
   createGroupChannel,
@@ -813,4 +927,6 @@ module.exports = {
   getChannelUnreadCount,
   getAllChannelsUnreadCount,
   markChannelAsRead,
+  getUserOnlineStatus,
+  muteGroupChat
 };
