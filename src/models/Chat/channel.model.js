@@ -19,6 +19,11 @@ const MemberSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  isDelete: {
+    type: Boolean,
+    default: false,
+  },
+  deletedAt: { type: Date },
 });
 
 const ChannelSchema = new mongoose.Schema(

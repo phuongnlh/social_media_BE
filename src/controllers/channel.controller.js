@@ -7,6 +7,7 @@ const messageModel = require("../models/message.model");
 const createPrivateChannel = async (req, res) => {
   try {
     const { userAId, userBId } = req.body;
+    const currentUserId = req.user._id.toString();
 
     if (!userAId || !userBId) {
       return res.status(400).json({
@@ -26,7 +27,14 @@ const createPrivateChannel = async (req, res) => {
     const channelId = `private-${ids[0]}-${ids[1]}`;
 
     let channel = await channelModel.findOne({ channelId });
-    if (!channel) {
+    if (channel) {
+      channel.members.forEach((member) => {
+        if (member.userId.toString() === currentUserId) {
+          member.isDelete = false;
+        }
+      });
+      await channel.save();
+    } else {
       channel = await channelModel.create({
         channelId,
         type: "private",
@@ -345,6 +353,7 @@ const getUserChannels = async (req, res) => {
     const channels = await channelModel
       .find({
         "members.userId": userId,
+        "members.isDelete": { $ne: true },
       })
       .populate("members.userId", "fullName avatar_url email")
       .sort({ updatedAt: -1 });
@@ -656,23 +665,37 @@ const getChannelMessages = async (req, res) => {
   try {
     const { channelId } = req.params;
     const { page = 1, limit = 20 } = req.query;
+    const userId = req.user._id;
 
     const skip = (page - 1) * parseInt(limit);
 
-    // Get total count for pagination info
-    const totalMessages = await messageModel.countDocuments({ channelId });
+    // Lấy deletedAt của user trong channel
+    const channel = await channelModel.findOne(
+      { channelId, "members.userId": userId },
+      { "members.$": 1 }
+    );
+    const deletedAt = channel?.members?.[0]?.deletedAt || null;
 
-    // Get messages sorted by newest first, then reverse for display
+    // Tạo filter cho message
+    const messageFilter = { channelId };
+    if (deletedAt) {
+      messageFilter.createdAt = { $gt: deletedAt };
+    }
+
+    // Đếm tổng số message theo filter
+    const totalMessages = await messageModel.countDocuments(messageFilter);
+
+    // Lấy message
     const messages = await messageModel
-      .find({ channelId })
+      .find(messageFilter)
       .populate("from", "fullName avatar_url")
-      .sort({ createdAt: -1 }) // Newest first for pagination
+      .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
 
     res.json({
       success: true,
-      messages: messages.reverse(), // Reverse to show oldest first in the batch
+      messages: messages.reverse(),
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(totalMessages / parseInt(limit)),
@@ -910,6 +933,54 @@ const getUserOnlineStatus = async (req, res) => {
   }
 };
 
+const deleteChat = async (req, res) => {
+  const { channelId } = req.params;
+  const userId = req.user._id;
+  try {
+    const channel = await channelModel.findOne({ channelId, "members.userId": userId });
+    if (!channel) {
+      return res.status(404).json({ success: false, message: "Channel not found" });
+    }
+
+    channel.members = channel.members.map((member) => {
+      if (member.userId.toString() === userId.toString()) {
+        return { ...member, isDelete: true, deletedAt: new Date() };
+      }
+      return member;
+    });
+
+    await channel.save();
+
+    res.status(200).json({ success: true, message: "Chat deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error deleting chat", error: error.message });
+  }
+};
+
+const restoreChat = async (req, res) => {
+  const { channelId } = req.params;
+  const userId = req.user._id;
+  try {
+    const channel = await channelModel.findOne({ channelId, "members.userId": userId });
+    if (!channel) {
+      return res.status(404).json({ success: false, message: "Channel not found" });
+    }
+
+    channel.members = channel.members.map((member) => {
+      if (member.userId.toString() === userId.toString()) {
+        return { ...member, isDelete: false };
+      }
+      return member;
+    });
+
+    await channel.save();
+
+    res.status(200).json({ success: true, message: "Chat restored successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error restoring chat", error: error.message });
+  }
+};
+
 module.exports = {
   createPrivateChannel,
   createGroupChannel,
@@ -928,5 +999,7 @@ module.exports = {
   getAllChannelsUnreadCount,
   markChannelAsRead,
   getUserOnlineStatus,
-  muteGroupChat
+  muteGroupChat,
+  deleteChat,
+  restoreChat
 };

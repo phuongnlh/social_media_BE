@@ -125,7 +125,6 @@ const logoutUser = async (req, res) => {
     // Đưa access token vào blacklist để vô hiệu hóa
     const decoded = verifyToken(token);
     const exp = decoded?.exp;
-    const now = Math.floor(Date.now() / 1000);
     const ttl = exp - now; // Thời gian còn lại của token
 
     if (ttl > 0) {

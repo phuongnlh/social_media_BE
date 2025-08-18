@@ -477,7 +477,6 @@ const getAllPostsbyUserId = async (req, res) => {
 const searchPost = async (req, res) => {
   try {
     const { query } = req.query;
-    console.log("Search query:", query);
     const posts = await Post.find({
       content: { $regex: query, $options: "i" },
       is_deleted: false,
