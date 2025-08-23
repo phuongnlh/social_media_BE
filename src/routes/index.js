@@ -7,9 +7,9 @@ const groupRoutes = require("./group.route");
 const groupPostRoutes = require("./group_post.route");
 const friendRoutes = require("./friend.route");
 const notificationRoutes = require("./notification.route");
-const chatRoutes = require("./chat.route");
 const channelRoutes = require("./channel.route");
 const mediaRoutes = require("./media.route");
+const agoraRoutes = require("./agora.route");
 const router = express.Router();
 
 router.get("/", (req, res) => {
@@ -24,8 +24,8 @@ router.use("/group", groupRoutes);
 router.use("/group-post", groupPostRoutes);
 router.use("/", friendRoutes);
 router.use("/notifications", notificationRoutes);
-router.use("/chat", chatRoutes);
 router.use("/channels", channelRoutes);
 router.use("/media", mediaRoutes);
+router.use("/agora", agoraRoutes);
 
 module.exports = router;

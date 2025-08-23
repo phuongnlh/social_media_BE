@@ -17,9 +17,19 @@ const server = http.createServer(app);
 // CORS configuration for HTTP requests
 app.use(
   cors({
-    origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
+    origin: [
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      "http://192.168.21.145:5173",
+      "https://74027a3132cc.ngrok-free.app",
+    ],
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Requested-With",
+      "ngrok-skip-browser-warning",
+    ],
     credentials: true, // Allow cookies and authorization headers
   })
 );

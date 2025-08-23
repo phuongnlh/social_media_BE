@@ -302,19 +302,28 @@ const reactToPost = async (req, res) => {
       const post = await Post.findById(post_id);
       if (post && post.user_id.toString() !== user_id.toString()) {
         // Lấy danh sách user đã react (trừ chủ post)
-        const reactions = await PostReaction.find({ post_id })
-          .populate("user_id", "username fullName");
+        const reactions = await PostReaction.find({ post_id }).populate(
+          "user_id",
+          "username fullName"
+        );
         const otherReactUsers = reactions.filter(
-          r => r.user_id && r.user_id._id.toString() !== post.user_id.toString()
+          (r) =>
+            r.user_id && r.user_id._id.toString() !== post.user_id.toString()
         );
         if (otherReactUsers.length > 0) {
-          const currentUser = otherReactUsers.find(r => r.user_id._id.toString() === user_id.toString());
+          const currentUser = otherReactUsers.find(
+            (r) => r.user_id._id.toString() === user_id.toString()
+          );
           const otherCount = otherReactUsers.length - 1;
           let contentNoti = "";
           if (otherCount > 0) {
-            contentNoti = `${currentUser.user_id.fullName || currentUser.user_id.username} và ${otherCount} người khác đã bày tỏ cảm xúc bài viết của bạn.`;
+            contentNoti = `${
+              currentUser.user_id.fullName || currentUser.user_id.username
+            } và ${otherCount} người khác đã bày tỏ cảm xúc bài viết của bạn.`;
           } else {
-            contentNoti = `${currentUser.user_id.fullName || currentUser.user_id.username} đã bày tỏ cảm xúc bài viết của bạn.`;
+            contentNoti = `${
+              currentUser.user_id.fullName || currentUser.user_id.username
+            } đã bày tỏ cảm xúc bài viết của bạn.`;
           }
           const io = getSocketIO();
           const userSocketMap = getUserSocketMap();
@@ -428,6 +437,82 @@ const getRecommendPost = async (req, res) => {
   }
 };
 
+const getAllPostsbyUserId = async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    // Tìm tất cả bài đăng không bị xóa của người dùng, sắp xếp theo thời gian giảm dần
+    const posts = await Post.find({ user_id: userId, is_deleted: false })
+      .sort({ createdAt: -1 })
+      .populate("user_id", "username avatar_url fullName") // Nạp thông tin người dùng
+      .lean();
+    // Nạp thông tin media cho mỗi bài đăng
+    const populatedPosts = await Promise.all(
+      posts.map(async (post) => {
+        // Lấy 1 document PostMedia cho mỗi post
+        const postMedia = await PostMedia.findOne({
+          post_id: post._id,
+        }).populate("media_id");
+        let media = [];
+        if (postMedia && postMedia.media_id && postMedia.media_id.length > 0) {
+          media = postMedia.media_id.map((m) => ({
+            url: m.url,
+            type: m.media_type,
+          }));
+        }
+        const { user_id, ...rest } = post;
+
+        return {
+          ...rest,
+          author: user_id, // Rename user_id => author
+          media,
+        };
+      })
+    );
+    res.json(populatedPosts);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+const searchPost = async (req, res) => {
+  try {
+    const { query } = req.query;
+    const posts = await Post.find({
+      content: { $regex: query, $options: "i" },
+      is_deleted: false,
+    })
+      .sort({ createdAt: -1 })
+      .populate("user_id", "username avatar_url fullName") // Nạp thông tin người dùng
+      .lean();
+    // Nạp thông tin media cho mỗi bài đăng
+    const populatedPosts = await Promise.all(
+      posts.map(async (post) => {
+        // Lấy 1 document PostMedia cho mỗi post
+        const postMedia = await PostMedia.findOne({
+          post_id: post._id,
+        }).populate("media_id");
+        let media = [];
+        if (postMedia && postMedia.media_id && postMedia.media_id.length > 0) {
+          media = postMedia.media_id.map((m) => ({
+            url: m.url,
+            type: m.media_type,
+          }));
+        }
+        const { user_id, ...rest } = post;
+
+        return {
+          ...rest,
+          author: user_id, // Rename user_id => author
+          media,
+        };
+      })
+    );
+    res.json(populatedPosts);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 module.exports = {
   createPost,
   getAllPostsbyUser,
@@ -442,4 +527,6 @@ module.exports = {
   getUserReactionsForPosts,
   sharePost,
   getRecommendPost,
+  getAllPostsbyUserId,
+  searchPost,
 };

@@ -125,7 +125,6 @@ const logoutUser = async (req, res) => {
     // Đưa access token vào blacklist để vô hiệu hóa
     const decoded = verifyToken(token);
     const exp = decoded?.exp;
-    const now = Math.floor(Date.now() / 1000);
     const ttl = exp - now; // Thời gian còn lại của token
 
     if (ttl > 0) {
@@ -312,6 +311,17 @@ const getUser = async (req, res) => {
   }
 };
 
+const getUserById = async (req, res) => {
+  const userId = req.params.userId;
+  console.log("Get user by id: ", userId);
+  try {
+    const user = await User.findById(userId).select("-hash -salt -isDeleted");
+    res.status(200).json(user);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 module.exports = {
   registerUser,
   verifyEmail,
@@ -322,4 +332,5 @@ module.exports = {
   forgotPassword,
   resetPassword,
   getUser,
+  getUserById
 };

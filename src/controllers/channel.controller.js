@@ -1,10 +1,13 @@
+const redisClient = require("../config/database.redis");
 const channelModel = require("../models/Chat/channel.model");
+const friendshipModel = require("../models/friendship.model");
 const messageModel = require("../models/message.model");
 
 // Tạo channel Private 1-1
 const createPrivateChannel = async (req, res) => {
   try {
     const { userAId, userBId } = req.body;
+    const currentUserId = req.user._id.toString();
 
     if (!userAId || !userBId) {
       return res.status(400).json({
@@ -24,7 +27,14 @@ const createPrivateChannel = async (req, res) => {
     const channelId = `private-${ids[0]}-${ids[1]}`;
 
     let channel = await channelModel.findOne({ channelId });
-    if (!channel) {
+    if (channel) {
+      channel.members.forEach((member) => {
+        if (member.userId.toString() === currentUserId) {
+          member.isDelete = false;
+        }
+      });
+      await channel.save();
+    } else {
       channel = await channelModel.create({
         channelId,
         type: "private",
@@ -55,7 +65,7 @@ const createPrivateChannel = async (req, res) => {
 // Tạo channel Group với nhiều thành viên
 const createGroupChannel = async (req, res) => {
   try {
-    const { name, memberIds, avatar } = req.body;
+    const { name, memberIds } = req.body;
     const createdBy = req.user._id.toString();
 
     // Tạo channelId unique
@@ -74,6 +84,9 @@ const createGroupChannel = async (req, res) => {
         }
       });
     }
+    const avatar = req.file
+      ? req.file.path
+      : "https://res.cloudinary.com/doxtbwyyc/image/upload/v1754065338/image_copy_yjz7dz.png";
 
     const channel = await channelModel.create({
       channelId,
@@ -340,14 +353,43 @@ const getUserChannels = async (req, res) => {
     const channels = await channelModel
       .find({
         "members.userId": userId,
+        "members.isDelete": { $ne: true },
       })
       .populate("members.userId", "fullName avatar_url email")
       .sort({ updatedAt: -1 });
 
+    // Tính số tin nhắn chưa đọc cho mỗi channel
+    const channelsWithUnreadCount = await Promise.all(
+      channels.map(async (channel) => {
+        try {
+          // Đếm số tin nhắn trong channel mà user chưa đọc
+          const unreadCount = await messageModel.countDocuments({
+            channelId: channel.channelId,
+            from: { $ne: userId }, // Không tính tin nhắn của chính user
+            "readBy.userId": { $ne: userId }, // User chưa đọc
+          });
+
+          return {
+            ...channel.toObject(),
+            unreadCount: unreadCount || 0,
+          };
+        } catch (error) {
+          console.error(
+            `Error calculating unread for channel ${channel.channelId}:`,
+            error
+          );
+          return {
+            ...channel.toObject(),
+            unreadCount: 0,
+          };
+        }
+      })
+    );
+
     res.status(200).json({
       success: true,
       message: "User channels retrieved successfully",
-      data: channels,
+      data: channelsWithUnreadCount,
     });
   } catch (error) {
     res.status(500).json({
@@ -484,7 +526,6 @@ const changeMemberRole = async (req, res) => {
 const updateGroupAvatar = async (req, res) => {
   try {
     const { channelId } = req.params;
-    const { avatar } = req.body;
     const userId = req.user._id.toString();
 
     const channel = await channelModel.findOne({ channelId });
@@ -508,6 +549,13 @@ const updateGroupAvatar = async (req, res) => {
       return res.status(403).json({
         success: false,
         message: "Only admins can update group avatar",
+      });
+    }
+    const avatar = req.file.path;
+    if (!avatar) {
+      return res.status(400).json({
+        success: false,
+        message: "No avatar file uploaded",
       });
     }
 
@@ -560,7 +608,7 @@ const leaveGroupChannel = async (req, res) => {
     // Kiểm tra nếu là admin duy nhất
     const admins = channel.members.filter((m) => m.role === "admin");
     if (member.role === "admin" && admins.length === 1) {
-      return res.status(400).json({
+      return res.status(403).json({
         success: false,
         message:
           "Cannot leave as the last admin. Transfer admin role first or delete the group.",
@@ -590,10 +638,13 @@ const leaveGroupChannel = async (req, res) => {
 const getChannelChatList = async (req, res) => {
   try {
     const currentUserId = req.user._id;
-    
-    const channels = await channelModel.find({
-      members: currentUserId,
-    }).populate("members", "fullName avatar_url").sort({ updatedAt: -1 });
+
+    const channels = await channelModel
+      .find({
+        members: currentUserId,
+      })
+      .populate("members", "fullName avatar_url")
+      .sort({ updatedAt: -1 });
 
     res.status(200).json({
       success: true,
@@ -613,10 +664,320 @@ const getChannelChatList = async (req, res) => {
 const getChannelMessages = async (req, res) => {
   try {
     const { channelId } = req.params;
-    const messages = await messageModel.find({ channelId }).sort({ createdAt: 1 });
-    res.json({ success: true, messages });
+    const { page = 1, limit = 20 } = req.query;
+    const userId = req.user._id;
+
+    const skip = (page - 1) * parseInt(limit);
+
+    // Lấy deletedAt của user trong channel
+    const channel = await channelModel.findOne(
+      { channelId, "members.userId": userId },
+      { "members.$": 1 }
+    );
+    const deletedAt = channel?.members?.[0]?.deletedAt || null;
+
+    // Tạo filter cho message
+    const messageFilter = { channelId };
+    if (deletedAt) {
+      messageFilter.createdAt = { $gt: deletedAt };
+    }
+
+    // Đếm tổng số message theo filter
+    const totalMessages = await messageModel.countDocuments(messageFilter);
+
+    // Lấy message
+    const messages = await messageModel
+      .find(messageFilter)
+      .populate("from", "fullName avatar_url")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    res.json({
+      success: true,
+      messages: messages.reverse(),
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(totalMessages / parseInt(limit)),
+        totalMessages,
+        hasMore: skip + messages.length < totalMessages,
+      },
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+const muteGroupChat = async (req, res) => {
+  try {
+    const { channelId } = req.params;
+    const { state } = req.body;
+    const userId = req.user._id.toString();
+
+    // Kiểm tra user có quyền truy cập channel không
+    const channel = await channelModel.findOne({
+      channelId,
+      "members.userId": userId,
+    });
+
+    if (!channel) {
+      return res.status(404).json({
+        success: false,
+        message: "Channel not found or access denied",
+      });
+    }
+
+    await channelModel.updateOne(
+      { channelId, "members.userId": userId },
+      { $set: { "members.$.isMuted": state } }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Update successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error muting group",
+      error: error.message,
+    });
+  }
+};
+
+// Lấy số tin nhắn chưa đọc của một channel cụ thể
+const getChannelUnreadCount = async (req, res) => {
+  try {
+    const { channelId } = req.params;
+    const userId = req.user._id.toString();
+
+    // Kiểm tra user có quyền truy cập channel không
+    const channel = await channelModel.findOne({
+      channelId,
+      "members.userId": userId,
+    });
+
+    if (!channel) {
+      return res.status(404).json({
+        success: false,
+        message: "Channel not found or access denied",
+      });
+    }
+
+    // Đếm số tin nhắn chưa đọc
+    const unreadCount = await messageModel.countDocuments({
+      channelId,
+      from: { $ne: userId }, // Không tính tin nhắn của chính user
+      "readBy.userId": { $ne: userId }, // User chưa đọc
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Unread count retrieved successfully",
+      data: { channelId, unreadCount },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error retrieving unread count",
+      error: error.message,
+    });
+  }
+};
+
+// Lấy số tin nhắn chưa đọc của tất cả channels
+const getAllChannelsUnreadCount = async (req, res) => {
+  try {
+    const userId = req.user._id.toString();
+
+    // Lấy tất cả channels của user
+    const channels = await channelModel.find({
+      "members.userId": userId,
+    });
+
+    const unreadCounts = {};
+
+    // Tính unread count cho từng channel
+    await Promise.all(
+      channels.map(async (channel) => {
+        try {
+          const unreadCount = await messageModel.countDocuments({
+            channelId: channel.channelId,
+            from: { $ne: userId },
+            "readBy.userId": { $ne: userId },
+          });
+          unreadCounts[channel.channelId] = unreadCount;
+        } catch (error) {
+          console.error(
+            `Error calculating unread for ${channel.channelId}:`,
+            error
+          );
+          unreadCounts[channel.channelId] = 0;
+        }
+      })
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "All channels unread counts retrieved successfully",
+      data: unreadCounts,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error retrieving unread counts",
+      error: error.message,
+    });
+  }
+};
+
+// Đánh dấu tất cả tin nhắn trong channel là đã đọc
+const markChannelAsRead = async (req, res) => {
+  try {
+    const { channelId } = req.params;
+    const userId = req.user._id.toString();
+
+    // Kiểm tra user có quyền truy cập channel không
+    const channel = await channelModel.findOne({
+      channelId,
+      "members.userId": userId,
+    });
+
+    if (!channel) {
+      return res.status(404).json({
+        success: false,
+        message: "Channel not found or access denied",
+      });
+    }
+
+    // Cập nhật tất cả tin nhắn chưa đọc thành đã đọc
+    const result = await messageModel.updateMany(
+      {
+        channelId,
+        from: { $ne: userId }, // Không update tin nhắn của chính user
+        "readBy.userId": { $ne: userId }, // Chỉ update những tin nhắn chưa đọc
+      },
+      {
+        $addToSet: {
+          // Sử dụng $addToSet thay vì $push để tránh duplicate
+          readBy: {
+            userId: userId,
+            readAt: new Date(),
+          },
+        },
+      }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Channel marked as read successfully",
+      data: {
+        channelId,
+        messagesMarked: result.modifiedCount,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error marking channel as read",
+      error: error.message,
+    });
+  }
+};
+
+const getUserOnlineStatus = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const listIds = await channelModel.find(
+      { members: { $elemMatch: { userId } } },
+      { members: 1 }
+    );
+
+    if (!listIds || listIds.length === 0) return [];
+
+    const listFriendIds = [
+      ...new Set(
+        listIds
+          .flatMap((doc) => doc.members.map((m) => m.userId.toString()))
+          .filter((id) => id !== userId.toString())
+      ),
+    ];
+
+    // Dùng pipeline để check online
+    const pipeline = redisClient.multi();
+    listFriendIds.forEach((fid) => {
+      pipeline.sIsMember("online_users", String(fid));
+      pipeline.hGet("user:lastActive", fid);
+    });
+
+    const results = await pipeline.exec();
+
+    const onlineStatuses = listFriendIds.map((fid, index) => ({
+      friendId: fid,
+      isOnline: results[index * 2] === 1,
+      lastActive: results[index * 2 + 1] || null,
+    }));
+
+    res.status(200).json({
+      success: true,
+      message: "User online status retrieved successfully",
+      data: { userId, onlineStatuses },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error retrieving user online status",
+      error: error.message,
+    });
+  }
+};
+
+const deleteChat = async (req, res) => {
+  const { channelId } = req.params;
+  const userId = req.user._id;
+  try {
+    const channel = await channelModel.findOne({ channelId, "members.userId": userId });
+    if (!channel) {
+      return res.status(404).json({ success: false, message: "Channel not found" });
+    }
+
+    channel.members = channel.members.map((member) => {
+      if (member.userId.toString() === userId.toString()) {
+        return { ...member, isDelete: true, deletedAt: new Date() };
+      }
+      return member;
+    });
+
+    await channel.save();
+
+    res.status(200).json({ success: true, message: "Chat deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error deleting chat", error: error.message });
+  }
+};
+
+const restoreChat = async (req, res) => {
+  const { channelId } = req.params;
+  const userId = req.user._id;
+  try {
+    const channel = await channelModel.findOne({ channelId, "members.userId": userId });
+    if (!channel) {
+      return res.status(404).json({ success: false, message: "Channel not found" });
+    }
+
+    channel.members = channel.members.map((member) => {
+      if (member.userId.toString() === userId.toString()) {
+        return { ...member, isDelete: false };
+      }
+      return member;
+    });
+
+    await channel.save();
+
+    res.status(200).json({ success: true, message: "Chat restored successfully" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Error restoring chat", error: error.message });
   }
 };
 
@@ -634,4 +995,11 @@ module.exports = {
   getUserChannels,
   getChannelDetails,
   changeMemberRole,
+  getChannelUnreadCount,
+  getAllChannelsUnreadCount,
+  markChannelAsRead,
+  getUserOnlineStatus,
+  muteGroupChat,
+  deleteChat,
+  restoreChat
 };

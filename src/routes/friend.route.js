@@ -15,7 +15,8 @@ router.patch(
 router.post("/follow", isLogin, followController.followUser);
 router.delete("/unfollow", isLogin, followController.unfollowUser);
 
-router.get("/friends", isLogin, friendController.getFriendsList);
+router.get("/friends/search", isLogin, friendController.searchFriends);
+router.get("/friends/:userId", isLogin, friendController.getFriendsList);
 router.get(
   "/friend-requests/incoming",
   isLogin,
@@ -27,6 +28,5 @@ router.get("/followings", isLogin, followController.getFollowings);
 
 router.get("/unfriended-users", isLogin, friendController.getUnfriendedUsers);
 
-router.get("/friends/search", isLogin, friendController.searchFriends);
 
 module.exports = router;
