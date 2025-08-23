@@ -17,6 +17,7 @@ router.get("/members/:group_id", isLogin, groupController.getGroupMembers); // L
 router.post("/ban-member", isLogin, groupController.banMember); // Ban thành viên
 router.post("/unban-member", isLogin, groupController.unbanMember); // Bỏ ban thành viên
 router.post("/restrict-member", isLogin, groupController.restrictMember); // Hạn chế thành viên đăng bài
+router.post("/demote-or-transfer", isLogin, groupController.demoteOrTransferCreator); // Hạ quyền bản thân hoặc chuyển quyền quản trị
 router.get("/banned-members/:group_id", isLogin, groupController.getbannedMemberList); // Lấy danh sách thành viên bị ban
 router.get("/restrict-members/:group_id", isLogin, groupController.getRestrictMemberList); // Lấy danh sách thành viên bị hạn chế đăng bài
 router.post("/handle-join-request/:request_id", isLogin, groupController.handleJoinRequest); // Duyệt/từ chối yêu cầu tham gia
