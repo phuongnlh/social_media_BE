@@ -366,19 +366,48 @@ module.exports = (io) => {
     // Call rejected - thông báo cuộc gọi bị từ chối
     socket.on("call_rejected", async (data) => {
       try {
-        const { channelId, rejectedBy, callerInfo } = data;
+        const { channelId, rejectedBy, callerInfo, isGroupCall, chatInfo } =
+          data;
 
-        // Thông báo cho người gọi rằng cuộc gọi bị từ chối
-        const callerSocketIds = notificationUserSocketMap.get(
-          callerInfo.id.toString()
-        );
-        if (callerSocketIds) {
-          for (const callerSocketId of callerSocketIds) {
-            notificationsNamespace.to(callerSocketId).emit("call_ended", {
-              channelId,
-              endedBy: rejectedBy,
-              reason: "rejected",
-            });
+        if (isGroupCall) {
+          // For group calls - just notify that this specific user rejected the call
+          // but don't end the call for everyone
+          notificationsNamespace.emit("call_rejected_by_user", {
+            channelId,
+            rejectedBy,
+            isGroupCall: true,
+            chatInfo,
+          });
+
+          // Also notify the caller that someone rejected but call continues
+          const callerSocketIds = notificationUserSocketMap.get(
+            callerInfo.id.toString()
+          );
+          if (callerSocketIds) {
+            for (const callerSocketId of callerSocketIds) {
+              notificationsNamespace
+                .to(callerSocketId)
+                .emit("call_rejected_by_user", {
+                  channelId,
+                  rejectedBy,
+                  isGroupCall: true,
+                });
+            }
+          }
+        } else {
+          // For private calls - notify the caller that call was rejected (ends the call)
+          const callerSocketIds = notificationUserSocketMap.get(
+            callerInfo.id.toString()
+          );
+          if (callerSocketIds) {
+            for (const callerSocketId of callerSocketIds) {
+              notificationsNamespace.to(callerSocketId).emit("call_ended", {
+                channelId,
+                endedBy: rejectedBy,
+                reason: "rejected",
+                isGroupCall: false,
+              });
+            }
           }
         }
       } catch (err) {

@@ -14,10 +14,10 @@ router.post("/forgot-password", UserController.forgotPassword);
 router.post("/reset-password", UserController.resetPassword);
 
 router.get("/baseUser", isLogin, UserController.getUser);
-router.get("/:userId", isLogin, UserController.getUserById);
 
 router.get("/", isLogin, (req, res) => {
   res.json(req.user);
 });
 
+router.get("/:userId", isLogin, UserController.getUserById);
 module.exports = router;
