@@ -837,5 +837,6 @@ module.exports = {
     restrictMember,
     getRestrictMemberList,
     getbannedMemberList,
-    demoteOrTransferCreator
+    demoteOrTransferCreator,
+    getUserGroups
 };
