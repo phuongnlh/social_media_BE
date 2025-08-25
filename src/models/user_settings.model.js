@@ -1,4 +1,3 @@
-// user_settings.model.js
 const mongoose = require("mongoose");
 const { Schema } = mongoose;
 
@@ -10,18 +9,27 @@ const userSettingSchema = new Schema(
       required: true,
       index: true,
     },
-    key: { type: String, required: true },
-    value: { type: String, required: true },
+    key: {
+      type: String,
+      required: true,
+      enum: [
+        "profile.email",
+        "profile.phone",
+        "profile.friend",
+        "profile.group",
+        "profile",
+      ],
+    },
     privacy_level: {
       type: String,
-      enum: ["public", "friends", "private", "custom"],
-      default: "private",
+      enum: ["public", "friends", "private"],
+      default: "public",
     },
-    custom_group: { type: Schema.Types.Mixed, default: null },
   },
   {
     timestamps: { createdAt: "created_at", updatedAt: "updated_at" },
   }
+  
 );
 
 userSettingSchema.index({ user_id: 1, key: 1 }, { unique: true });

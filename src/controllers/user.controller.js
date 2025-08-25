@@ -6,7 +6,7 @@ const {
   sendResetPasswordEmail,
 } = require("../utils/email_utils");
 const redisClient = require("../config/database.redis");
-
+const UserSetting = require("../models/user_settings.model");
 // Đăng ký tài khoản người dùng mới
 const registerUser = async (req, res) => {
   try {
@@ -20,7 +20,13 @@ const registerUser = async (req, res) => {
     // Tạo mật khẩu băm và muối
     const { hash, salt } = genPwd(password);
     // Tạo người dùng mới
-    const newUser = await new User({ fullName, email, hash, salt, username }).save();
+    const newUser = await new User({
+      fullName,
+      email,
+      hash,
+      salt,
+      username,
+    }).save();
     // Tạo token xác thực email
     const token = signToken({ id: newUser._id }, "15m");
 
@@ -55,6 +61,7 @@ const verifyEmail = async (req, res) => {
     // Cập nhật trạng thái xác thực email
     user.EmailVerified = true;
     await user.save();
+    await createPrivacyDefault(user._id);
     res.json({ message: "Email đã được xác thực thành công" });
   } catch (err) {
     return res.status(500).json({ message: err.message });
@@ -316,14 +323,186 @@ const getUser = async (req, res) => {
   }
 };
 
+// Controller upload avatar
+const uploadUserAvatar = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res
+        .status(400)
+        .json({ message: "Không có file nào được tải lên" });
+    }
+
+    // Cập nhật thông tin user với avatar URL mới
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { avatar_url: req.file.path || req.file.secure_url },
+      { new: true }
+    );
+
+    return res.status(200).json({
+      message: "Cập nhật avatar thành công",
+      avatar_url: req.file.path || req.file.secure_url,
+    });
+  } catch (error) {
+    console.error("Lỗi tải lên avatar:", error);
+    return res.status(500).json({ message: "Lỗi server" });
+  }
+};
+const uploadBackgroundProfile = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res
+        .status(400)
+        .json({ message: "Không có file nào được tải lên" });
+    }
+
+    // Cập nhật thông tin user với background URL mới
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { cover_photo_url: req.file.path || req.file.secure_url },
+      { new: true }
+    );
+
+    return res.status(200).json({
+      message: "Cập nhật background thành công",
+      cover_photo_url: req.file.path || req.file.secure_url,
+    });
+  } catch (error) {
+    console.error("Lỗi tải lên background:", error);
+    return res.status(500).json({ message: "Lỗi server" });
+  }
+};
+const UpdateDataProfile = async (req, res) => {
+  const userId = req.user._id;
+  const { username, fullName, email, bio, phone } = req.body;
+
+  try {
+    await User.findByIdAndUpdate(
+      userId,
+      { username, fullName, email, bio, phone },
+      { new: true }
+    );
+
+    res.status(200).json({
+      message: "Cập nhật thông tin cá nhân thành công",
+    });
+  } catch (error) {
+    console.error("Lỗi cập nhật thông tin cá nhân:", error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+const getUserPrivacy = async (req, res) => {
+  const userId = req.user._id;
+  try {
+    const privacySetting = await UserSetting.find({ user_id: userId });
+    res.status(200).json({
+      message: "Lấy cài đặt quyền riêng tư thành công",
+      data: privacySetting,
+    });
+  } catch (error) {
+    console.error("Lỗi lấy cài đặt quyền riêng tư:", error);
+    res.status(500).json({ message: error });
+  }
+};
+
+const PrivacySetting = async (req, res) => {
+  const userId = req.user._id;
+  const {
+    profile_visibility,
+    message_permission,
+    online_status,
+    read_receipts,
+  } = req.body;
+
+  try {
+    // Tìm hoặc tạo mới document PrivacySetting cho user
+    const privacySetting = await PrivacySetting.findOneAndUpdate(
+      { user_id: userId },
+      { profile_visibility, message_permission, online_status, read_receipts },
+      { new: true, upsert: true }
+    );
+
+    res.status(200).json({
+      message: "Cập nhật cài đặt quyền riêng tư thành công",
+      data: privacySetting,
+    });
+  } catch (error) {
+    console.error("Lỗi cập nhật cài đặt quyền riêng tư:", error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+const createPrivacyDefault = async (userId) => {
+  const defaultSettings = [
+    { user_id: userId, key: "profile", privacy_level: "public" },
+    { user_id: userId, key: "profile.email", privacy_level: "public" },
+    { user_id: userId, key: "profile.phone", privacy_level: "public" },
+    { user_id: userId, key: "profile.friend", privacy_level: "public" },
+    { user_id: userId, key: "profile.group", privacy_level: "public" },
+  ];
+
+  try {
+    await UserSetting.insertMany(defaultSettings);
+  } catch (error) {
+    console.error("Lỗi tạo cài đặt quyền riêng tư mặc định:", error);
+  }
+};
+const updateMultiPrivacySetting = async (req, res) => {
+  const userId = req.user._id;
+  const { settings } = req.body; // [{ key, privacy_level, custom_group }]
+
+  if (!Array.isArray(settings)) {
+    return res.status(400).json({ message: "settings phải là một mảng" });
+  }
+
+  // Chỉ cho phép các key hợp lệ
+  const allowedKeys = [
+    "profile",
+    "profile.email",
+    "profile.phone",
+    "profile.friend",
+    "profile.group",
+  ];
+
+  try {
+    const bulkOps = settings
+      .filter(({ key }) => allowedKeys.includes(key))
+      .map(({ key, privacy_level, custom_group }) => ({
+        updateOne: {
+          filter: { user_id: userId, key },
+          update: { privacy_level },
+          upsert: true,
+        },
+      }));
+
+    if (bulkOps.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "Không có key hợp lệ để cập nhật" });
+    }
+
+    await UserSetting.bulkWrite(bulkOps);
+
+    res.json({ message: "Cập nhật quyền riêng tư thành công" });
+  } catch (error) {
+    console.error("Lỗi cập nhật quyền riêng tư:", error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
 module.exports = {
   registerUser,
   verifyEmail,
   loginUser,
+  PrivacySetting,
   logoutUser,
   logoutAllUser,
   changePassword,
   forgotPassword,
   resetPassword,
   getUser,
+  uploadUserAvatar,
+  uploadBackgroundProfile,
+  UpdateDataProfile,
+  getUserPrivacy,
+  createPrivacyDefault,
+  updateMultiPrivacySetting,
 };

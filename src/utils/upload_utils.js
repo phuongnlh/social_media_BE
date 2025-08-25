@@ -21,29 +21,30 @@ const groupPostStorage = new CloudinaryStorage({
   }),
 });
 
+// Cấu hình storage cho avatar đơn giản hơn
+const avatarStorage = new CloudinaryStorage({
+  cloudinary,
+  params: async (req, file) => ({
+    folder: "avatars",
+    resource_type: "auto",
+    public_id: `avatar-${Date.now()}-${req.user._id}`,
+  }),
+});
+
 const uploadToCloudinary = (buffers) => {
-  // Hàm này giờ trả về một Promise chứa mảng các kết quả upload
   return Promise.all(
     buffers.map((buffer) => {
       return new Promise((resolve, reject) => {
-        // Tạo một stream upload lên Cloudinary
         const uploadStream = cloudinary.uploader.upload_stream(
           {
-            // Tùy chọn: bạn có thể thêm folder, tag... ở đây
             resource_type: "auto",
             folder: "chat_media",
           },
           (error, result) => {
-            if (error) {
-              // Nếu có lỗi, reject Promise
-              return reject(error);
-            }
-            // Nếu thành công, resolve Promise với kết quả
+            if (error) return reject(error);
             resolve(result);
           }
         );
-
-        // Chuyển buffer thành stream và pipe vào stream upload của Cloudinary
         streamifier.createReadStream(buffer).pipe(uploadStream);
       });
     })
@@ -52,6 +53,6 @@ const uploadToCloudinary = (buffers) => {
 
 const upload = multer({ storage });
 const uploadGroup = multer({ storage: groupPostStorage });
+const uploadAvatar = multer({ storage: avatarStorage });
 
-module.exports = { upload, uploadGroup };
-module.exports.uploadToCloudinary = uploadToCloudinary;
+module.exports = { upload, uploadGroup, uploadAvatar, uploadToCloudinary };
