@@ -15,7 +15,6 @@ router.post("/forgot-password", UserController.forgotPassword);
 router.post("/reset-password", UserController.resetPassword);
 
 router.get("/baseUser", isLogin, UserController.getUser);
-router.get("/:userId", isLogin, UserController.getUserById);
 
 router.post("/avatar", isLogin, uploadAvatar.single("file"), UserController.uploadUserAvatar);
 router.post("/background", isLogin, uploadAvatar.single("file"), UserController.uploadBackgroundProfile);
@@ -28,4 +27,5 @@ router.get("/", isLogin, (req, res) => {
   res.json(req.user);
 });
 
+router.get("/:userId", isLogin, UserController.getUserById);
 module.exports = router;

@@ -22,11 +22,14 @@ router.get(
   isLogin,
   friendController.getIncomingFriendRequests
 );
-router.delete("/friend-request/withdraw", isLogin, friendController.withdrawFriendRequest);
+router.delete(
+  "/friend-request/withdraw",
+  isLogin,
+  friendController.withdrawFriendRequest
+);
 router.get("/followers", isLogin, followController.getFollowers);
 router.get("/followings", isLogin, followController.getFollowings);
 
 router.get("/unfriended-users", isLogin, friendController.getUnfriendedUsers);
-
 
 module.exports = router;
