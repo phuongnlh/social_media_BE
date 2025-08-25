@@ -3,6 +3,8 @@ const Media = require("../models/media.model");
 const PostMedia = require("../models/postMedia.model");
 const PostReaction = require("../models/Comment_Reaction/post_reaction.model");
 const mongoose = require("mongoose");
+const notificationService = require("../services/notification.service");
+const { getSocketIO, getUserSocketMap } = require("../socket/io-instance");
 
 // Tạo bài đăng mới với tệp media (nếu có)
 const createPost = async (req, res) => {
@@ -295,7 +297,48 @@ const reactToPost = async (req, res) => {
         runValidators: true,
       }
     );
-
+    // Gửi thông báo cho chủ post
+    try {
+      const post = await Post.findById(post_id);
+      if (post && post.user_id.toString() !== user_id.toString()) {
+        // Lấy danh sách user đã react (trừ chủ post)
+        const reactions = await PostReaction.find({ post_id }).populate(
+          "user_id",
+          "username fullName"
+        );
+        const otherReactUsers = reactions.filter(
+          (r) =>
+            r.user_id && r.user_id._id.toString() !== post.user_id.toString()
+        );
+        if (otherReactUsers.length > 0) {
+          const currentUser = otherReactUsers.find(
+            (r) => r.user_id._id.toString() === user_id.toString()
+          );
+          const otherCount = otherReactUsers.length - 1;
+          let contentNoti = "";
+          if (otherCount > 0) {
+            contentNoti = `${
+              currentUser.user_id.fullName || currentUser.user_id.username
+            } và ${otherCount} người khác đã bày tỏ cảm xúc bài viết của bạn.`;
+          } else {
+            contentNoti = `${
+              currentUser.user_id.fullName || currentUser.user_id.username
+            } đã bày tỏ cảm xúc bài viết của bạn.`;
+          }
+          const io = getSocketIO();
+          const userSocketMap = getUserSocketMap();
+          await notificationService.createNotification(
+            io,
+            post.user_id,
+            "post_reaction",
+            contentNoti,
+            userSocketMap
+          );
+        }
+      }
+    } catch (notifyErr) {
+      console.error("Không thể gửi thông báo reaction bài viết:", notifyErr);
+    }
     res.status(201).json({ message: "Reaction saved", reaction });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -325,7 +368,7 @@ const getReactionsOfPost = async (req, res) => {
     const { post_id } = req.params;
     const reactions = await PostReaction.find({ post_id }).populate(
       "user_id",
-      "username"
+      "fullName avatar_url"
     ); //Thêm vào các trường tương ứng nếu cần thiết
 
     //Đếm
@@ -361,7 +404,83 @@ const getUserReactionsForPosts = async (req, res) => {
 // Lấy tất cả bài đăng của người dùng đang đăng nhập
 const getRecommendPost = async (req, res) => {
   try {
-    const posts = await Post.find({ is_deleted: false })
+    const posts = await Post.find({ is_deleted: false, type: "Public" })
+      .sort({ createdAt: -1 })
+      .populate("user_id", "username avatar_url fullName") // Nạp thông tin người dùng
+      .lean();
+    // Nạp thông tin media cho mỗi bài đăng
+    const populatedPosts = await Promise.all(
+      posts.map(async (post) => {
+        // Lấy 1 document PostMedia cho mỗi post
+        const postMedia = await PostMedia.findOne({
+          post_id: post._id,
+        }).populate("media_id");
+        let media = [];
+        if (postMedia && postMedia.media_id && postMedia.media_id.length > 0) {
+          media = postMedia.media_id.map((m) => ({
+            url: m.url,
+            type: m.media_type,
+          }));
+        }
+        const { user_id, ...rest } = post;
+
+        return {
+          ...rest,
+          author: user_id, // Rename user_id => author
+          media,
+        };
+      })
+    );
+    res.json(populatedPosts);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+const getAllPostsbyUserId = async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    // Tìm tất cả bài đăng không bị xóa của người dùng, sắp xếp theo thời gian giảm dần
+    const posts = await Post.find({ user_id: userId, is_deleted: false })
+      .sort({ createdAt: -1 })
+      .populate("user_id", "username avatar_url fullName") // Nạp thông tin người dùng
+      .lean();
+    // Nạp thông tin media cho mỗi bài đăng
+    const populatedPosts = await Promise.all(
+      posts.map(async (post) => {
+        // Lấy 1 document PostMedia cho mỗi post
+        const postMedia = await PostMedia.findOne({
+          post_id: post._id,
+        }).populate("media_id");
+        let media = [];
+        if (postMedia && postMedia.media_id && postMedia.media_id.length > 0) {
+          media = postMedia.media_id.map((m) => ({
+            url: m.url,
+            type: m.media_type,
+          }));
+        }
+        const { user_id, ...rest } = post;
+
+        return {
+          ...rest,
+          author: user_id, // Rename user_id => author
+          media,
+        };
+      })
+    );
+    res.json(populatedPosts);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+const searchPost = async (req, res) => {
+  try {
+    const { query } = req.query;
+    const posts = await Post.find({
+      content: { $regex: query, $options: "i" },
+      is_deleted: false,
+    })
       .sort({ createdAt: -1 })
       .populate("user_id", "username avatar_url fullName") // Nạp thông tin người dùng
       .lean();
@@ -408,4 +527,6 @@ module.exports = {
   getUserReactionsForPosts,
   sharePost,
   getRecommendPost,
+  getAllPostsbyUserId,
+  searchPost,
 };

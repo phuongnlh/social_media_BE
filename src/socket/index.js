@@ -1,40 +1,43 @@
 const Message = require("../models/message.model");
+const Channel = require("../models/Chat/channel.model"); // Thêm import model Channel
 const Notification = require("../models/notification.model");
 const { uploadToCloudinary } = require("../utils/upload_utils");
 const notificationService = require("../services/notification.service");
 const { setSocketIO } = require("./io-instance");
+const redisClient = require("../config/database.redis");
+const dayjs = require("dayjs");
 
 const userSocketMap = new Map(); // userId => socket.id
 const messageUserSocketMap = new Map(); // userId => socket.id cho messaging
 const notificationUserSocketMap = new Map(); // userId => socket.id cho notifications
-
+const userRefreshTokensSet = `user-online`;
 module.exports = (io) => {
   // Make IO instance available globally
-  setSocketIO(io, userSocketMap);
+  setSocketIO(io, userSocketMap, notificationUserSocketMap);
 
   // ===== MESSAGING NAMESPACE =====
   const messagesNamespace = io.of("/messages");
   messagesNamespace.on("connection", (socket) => {
-    console.log("User connected to messages namespace:", socket.id);
-
     // Đăng ký userId cho messaging socket
-    socket.on("register_messaging", ({ userId }) => {
+    socket.on("register_messaging", async ({ userId }) => {
       socket.userId = userId.toString();
+
+      // Lưu socketId -> userId
+      await redisClient.sAdd(`user:online:${userId}`, socket.id);
+
+      // Đánh dấu user đang online
+      await redisClient.sAdd("online_users", userId);
 
       if (!messageUserSocketMap.has(userId)) {
         messageUserSocketMap.set(userId, new Set());
       }
       messageUserSocketMap.get(userId).add(socket.id);
-
-      console.log(
-        `User ${userId} registered for messaging with socket ${socket.id}`
-      );
     });
 
     // Xử lý gửi tin nhắn
     socket.on("send_message", async (data) => {
       try {
-        const { from, to, content, media = [] } = data;
+        const { from, channelId, content, media = [] } = data;
 
         let mediaPayload = [];
         if (media.length > 0) {
@@ -47,40 +50,74 @@ module.exports = (io) => {
 
         const message = await Message.create({
           from,
-          to,
+          channelId,
           content,
           media: mediaPayload,
+          readBy: [
+            {
+              userId: from, // Người gửi đã "đọc" message của chính họ
+              readAt: new Date(),
+            },
+          ],
         });
 
-        // Gửi tin nhắn cho người nhận qua messaging namespace
-        const toSocketIds = messageUserSocketMap.get(to.toString());
-        if (toSocketIds) {
-          for (const socketId of toSocketIds) {
-            messagesNamespace.to(socketId).emit("receive_message", message);
+        const newMessage = await Message.findById(message._id).populate(
+          "from",
+          "fullName avatar_url"
+        );
+
+        // Tìm channel để lấy danh sách thành viên
+        const channel = await Channel.findOne({ channelId });
+        if (!channel) {
+          throw new Error("Channel không tồn tại");
+        }
+
+        // Update channel's lastMessage và updatedAt
+        await Channel.findOneAndUpdate(
+          { channelId },
+          {
+            lastMessage: content || "Attachment sent",
+            updatedAt: new Date(),
+          }
+        );
+
+        // Gửi tin nhắn cho tất cả thành viên trong channel (trừ người gửi)
+        const recipientMembers = channel.members.filter(
+          (member) => member.userId.toString() !== from.toString()
+        );
+
+        // Thêm thông tin channel vào message để client biết message thuộc kênh nào
+        const messageWithChannel = {
+          ...newMessage.toObject(),
+          channelType: channel.type,
+          channelName: channel.name,
+        };
+
+        // Gửi tin nhắn đến tất cả thành viên
+        for (const member of recipientMembers) {
+          const memberId = member.userId.toString();
+          const memberSocketIds = messageUserSocketMap.get(memberId);
+
+          if (memberSocketIds) {
+            for (const socketId of memberSocketIds) {
+              messagesNamespace
+                .to(socketId)
+                .emit("receive_message", messageWithChannel);
+            }
           }
         }
 
-        // Tạo thông báo cho người nhận tin nhắn qua notification namespace
-        try {
-          const notiWithUser = await message.populate(
-            "from",
-            "fullName avatar_url"
-          );
-          const notificationsNamespace = io.of("/notifications");
-          await notificationService.createNotificationWithNamespace(
-            notificationsNamespace,
-            to,
-            "message",
-            `${notiWithUser.from?.fullName} đã gửi cho bạn một tin nhắn mới`,
-            notificationUserSocketMap,
-            { messageId: message._id, fromUser: from }
-          );
-        } catch (notifyErr) {
-          console.error("Failed to create message notification:", notifyErr);
-        }
+        // Cập nhật message với readBy để người gửi được đánh dấu là đã đọc
+        await Message.findByIdAndUpdate(message._id, {
+          $push: { readBy: { userId: from, readAt: new Date() } },
+        });
 
         // Xác nhận gửi thành công cho người gửi
-        socket.emit("message_sent", message);
+        const populatedMessage = await Message.findById(message._id).populate(
+          "from",
+          "fullName avatar_url"
+        );
+        socket.emit("message_sent", populatedMessage);
       } catch (err) {
         console.error("Send message error:", err);
         socket.emit("error_message", "Gửi tin nhắn thất bại.");
@@ -88,24 +125,41 @@ module.exports = (io) => {
     });
 
     // Xử lý disconnect cho messaging
-    socket.on("disconnect", () => {
+    socket.on("disconnect", async () => {
       const userId = socket.userId;
-      if (userId && messageUserSocketMap.has(userId)) {
+      if (!userId) return;
+
+      // Xóa socket id khỏi Redis
+      await redisClient.sRem(`user:online:${userId}`, socket.id);
+
+      if (messageUserSocketMap.has(userId)) {
         const sockets = messageUserSocketMap.get(userId);
         sockets.delete(socket.id);
         if (sockets.size === 0) {
           messageUserSocketMap.delete(userId);
         }
       }
-      console.log("User disconnected from messages namespace:", socket.id);
+
+      const stillOnline = await redisClient.sCard(`user:online:${userId}`);
+      if (stillOnline === 0) {
+        // Xóa khỏi danh sách online
+        await redisClient.sRem("online_users", userId);
+
+        // Ghi last active (ISO string hoặc timestamp)
+        await redisClient.hSet(
+          "user:lastActive",
+          userId,
+          dayjs().toISOString()
+        );
+
+        console.log(`❌ User ${userId} offline, last active saved`);
+      }
     });
   });
 
   // ===== NOTIFICATIONS NAMESPACE =====
   const notificationsNamespace = io.of("/notifications");
   notificationsNamespace.on("connection", (socket) => {
-    console.log("User connected to notifications namespace:", socket.id);
-
     // Đăng ký userId cho notification socket
     socket.on("register_notifications", ({ userId }) => {
       socket.userId = userId.toString();
@@ -114,10 +168,6 @@ module.exports = (io) => {
         notificationUserSocketMap.set(userId, new Set());
       }
       notificationUserSocketMap.get(userId).add(socket.id);
-
-      console.log(
-        `User ${userId} registered for notifications with socket ${socket.id}`
-      );
 
       // Gửi số lượng thông báo chưa đọc khi kết nối
       notificationService
@@ -240,6 +290,148 @@ module.exports = (io) => {
       }
     });
 
+    // ===== CALL EVENTS =====
+
+    // Gửi thông báo call đến participants
+    socket.on("send_call_notification", async (data) => {
+      try {
+        const {
+          channelId,
+          callType,
+          callerInfo,
+          participants,
+          chatType,
+          chatInfo,
+        } = data;
+        const callerId = socket.userId;
+
+        // Gửi call notification đến từng participant
+        for (const participantId of participants) {
+          if (participantId.toString() !== callerId) {
+            // Tạo notification message dựa trên loại chat
+            const isGroupCall = chatType === "group";
+            const notificationMessage = isGroupCall
+              ? `${callerInfo.name} đang gọi ${
+                  callType === "video" ? "video" : "thoại"
+                } nhóm ${chatInfo?.name || "Nhóm"}`
+              : `${callerInfo.name} đang gọi ${
+                  callType === "video" ? "video" : "thoại"
+                }`;
+
+            // Gửi real-time call notification
+            const participantSocketIds = notificationUserSocketMap.get(
+              participantId.toString()
+            );
+            if (participantSocketIds) {
+              for (const participantSocketId of participantSocketIds) {
+                notificationsNamespace
+                  .to(participantSocketId)
+                  .emit("incoming_call", {
+                    channelId,
+                    callType,
+                    callerInfo,
+                    chatType,
+                    chatInfo,
+                    timestamp: Date.now(),
+                  });
+              }
+            }
+          }
+        }
+
+        socket.emit("call_notification_sent", { success: true });
+      } catch (err) {
+        console.error("Send call notification error:", err);
+        socket.emit("call_notification_error", "Không thể gửi thông báo call");
+      }
+    });
+
+    // Join call - thông báo đã tham gia call
+    socket.on("join_call", async (data) => {
+      try {
+        const { channelId, userInfo } = data;
+        const userId = socket.userId;
+
+        // Thông báo cho các users khác trong call
+        notificationsNamespace.emit("user_joined_call", {
+          channelId,
+          userInfo,
+          userId,
+        });
+      } catch (err) {
+        console.error("Join call error:", err);
+      }
+    });
+
+    // Call rejected - thông báo cuộc gọi bị từ chối
+    socket.on("call_rejected", async (data) => {
+      try {
+        const { channelId, rejectedBy, callerInfo } = data;
+
+        // Thông báo cho người gọi rằng cuộc gọi bị từ chối
+        const callerSocketIds = notificationUserSocketMap.get(
+          callerInfo.id.toString()
+        );
+        if (callerSocketIds) {
+          for (const callerSocketId of callerSocketIds) {
+            notificationsNamespace.to(callerSocketId).emit("call_ended", {
+              channelId,
+              endedBy: rejectedBy,
+              reason: "rejected",
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Call rejected error:", err);
+      }
+    });
+
+    // Leave call - thông báo đã rời call
+    socket.on("leave_call", async (data) => {
+      try {
+        const { channelId, userInfo } = data;
+        const userId = socket.userId;
+
+        // Thông báo cho các users khác trong call
+        notificationsNamespace.emit("user_left_call", {
+          channelId,
+          userInfo,
+          userId,
+        });
+      } catch (err) {
+        console.error("Leave call error:", err);
+      }
+    });
+
+    // End call - kết thúc call cho tất cả
+    socket.on("end_call", async (data) => {
+      try {
+        const { channelId, participants } = data;
+        const userId = socket.userId;
+
+        // Thông báo kết thúc call cho tất cả participants
+        for (const participantId of participants) {
+          if (participantId.toString() !== userId) {
+            const participantSocketIds = notificationUserSocketMap.get(
+              participantId.toString()
+            );
+            if (participantSocketIds) {
+              for (const participantSocketId of participantSocketIds) {
+                notificationsNamespace
+                  .to(participantSocketId)
+                  .emit("call_ended", {
+                    channelId,
+                    endedBy: userId,
+                  });
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("End call error:", err);
+      }
+    });
+
     // Xử lý disconnect cho notifications
     socket.on("disconnect", () => {
       const userId = socket.userId;
@@ -250,50 +442,6 @@ module.exports = (io) => {
           notificationUserSocketMap.delete(userId);
         }
       }
-      console.log("User disconnected from notifications namespace:", socket.id);
     });
   });
-
-  // // ===== LEGACY SUPPORT (tạm thời giữ để backward compatibility) =====
-  // io.on("connection", (socket) => {
-  //   console.log("User connected to main namespace (legacy):", socket.id);
-
-  //   //Đăng kí UserId cho socket (legacy)
-  //   socket.on("register", ({ userId }) => {
-  //     socket.userId = userId.toString();
-
-  //     // Thêm socket.id vào danh sách socketId của userId
-  //     if (!userSocketMap.has(userId)) {
-  //       userSocketMap.set(userId, new Set());
-  //     }
-  //     userSocketMap.get(userId).add(socket.id);
-  //   });
-
-  //   // Legacy message handling - redirect to new namespace
-  //   socket.on("send-message", async (data) => {
-  //     console.warn(
-  //       "Legacy send-message event received. Please use /messages namespace"
-  //     );
-  //     // Có thể redirect hoặc xử lý legacy
-  //   });
-
-  //   // Legacy notification handling
-  //   socket.on("send-notification", async (data) => {
-  //     console.warn(
-  //       "Legacy send-notification event received. Please use /notifications namespace"
-  //     );
-  //   });
-
-  //   socket.on("disconnect", () => {
-  //     const userId = socket.userId;
-  //     if (userId && userSocketMap.has(userId)) {
-  //       const sockets = userSocketMap.get(userId);
-  //       sockets.delete(socket.id);
-  //       if (sockets.size === 0) {
-  //         userSocketMap.delete(userId);
-  //       }
-  //     }
-  //     console.log("User disconnected from main namespace (legacy):", socket.id);
-  //   });
-  // });
 };

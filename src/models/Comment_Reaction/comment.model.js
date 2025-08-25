@@ -10,13 +10,24 @@ const commentSchema = new mongoose.Schema(
     post_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Post",
-      required: true,
+      required: false,
+    },
+    postgr_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "GroupPost",
+      required: false,
     },
     parent_comment_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Comment",
       default: null,
     },
+    level: { type: Number, default: 0, index: true },
+    root_id: { type: mongoose.Schema.Types.ObjectId, ref: "Comment", default: null, index: true }, // id comment level 0
+    thread_parent_id: { type: mongoose.Schema.Types.ObjectId, ref: "Comment", default: null, index: true }, // id comment level 1 (đầu nhánh)
+    reply_to_comment_id: { type: mongoose.Schema.Types.ObjectId, ref: "Comment", default: null }, // trả lời cụ thể ai
+    ancestors: [{ type: mongoose.Schema.Types.ObjectId, ref: "Comment" }], // [root, level1]
+
     content: {
       type: String,
     },

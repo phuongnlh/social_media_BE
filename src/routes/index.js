@@ -9,7 +9,10 @@ const friendRoutes = require("./friend.route");
 // const notificationRoutes = require("./notification.route");
 // const userSettingRoutes = require("./user_setting.route");
 const chatRoutes = require("./chat.route");
+const notificationRoutes = require("./notification.route");
+const channelRoutes = require("./channel.route");
 const mediaRoutes = require("./media.route");
+const agoraRoutes = require("./agora.route");
 const router = express.Router();
 
 router.get("/", (req, res) => {
@@ -26,6 +29,9 @@ router.use("/", friendRoutes);
 // router.use("/notifications", notificationRoutes);
 // router.use("/user-setting", userSettingRoutes);
 router.use("/chat", chatRoutes);
+router.use("/notifications", notificationRoutes);
+router.use("/channels", channelRoutes);
 router.use("/media", mediaRoutes);
+router.use("/agora", agoraRoutes);
 
 module.exports = router;
