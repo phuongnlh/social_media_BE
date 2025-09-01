@@ -13,11 +13,13 @@ const userSettingSchema = new Schema(
       type: String,
       required: true,
       enum: [
+        "profile",
         "profile.email",
-        "profile.phone",
+        "profile.post",
+        "profile.photo",
+        "profile.video",
         "profile.friend",
         "profile.group",
-        "profile",
       ],
     },
     privacy_level: {
@@ -29,7 +31,6 @@ const userSettingSchema = new Schema(
   {
     timestamps: { createdAt: "created_at", updatedAt: "updated_at" },
   }
-  
 );
 
 userSettingSchema.index({ user_id: 1, key: 1 }, { unique: true });

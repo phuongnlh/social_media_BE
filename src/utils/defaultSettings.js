@@ -3,10 +3,6 @@ module.exports = {
     value: "",
     privacy_level: "private"
   },
-  "profile.phone": {
-    value: "",
-    privacy_level: "public"
-  },
   "profile.bio": {
     value: "",
     privacy_level: "public"

@@ -7,6 +7,7 @@ const {
 } = require("../utils/email_utils");
 const redisClient = require("../config/database.redis");
 const UserSetting = require("../models/user_settings.model");
+const Friendship = require("../models/friendship.model");
 // Đăng ký tài khoản người dùng mới
 const registerUser = async (req, res) => {
   try {
@@ -381,7 +382,9 @@ const uploadBackgroundProfile = async (req, res) => {
 const UpdateDataProfile = async (req, res) => {
   const userId = req.user._id;
   const { username, fullName, email, bio, phone } = req.body;
-
+  if (!/^\d{10,12}$/.test(phone)) {
+    return res.status(400).json({ message: "Số điện thoại không hợp lệ" });
+  }
   try {
     await User.findByIdAndUpdate(
       userId,
@@ -410,38 +413,13 @@ const getUserPrivacy = async (req, res) => {
     res.status(500).json({ message: error });
   }
 };
-
-const PrivacySetting = async (req, res) => {
-  const userId = req.user._id;
-  const {
-    profile_visibility,
-    message_permission,
-    online_status,
-    read_receipts,
-  } = req.body;
-
-  try {
-    // Tìm hoặc tạo mới document PrivacySetting cho user
-    const privacySetting = await PrivacySetting.findOneAndUpdate(
-      { user_id: userId },
-      { profile_visibility, message_permission, online_status, read_receipts },
-      { new: true, upsert: true }
-    );
-
-    res.status(200).json({
-      message: "Cập nhật cài đặt quyền riêng tư thành công",
-      data: privacySetting,
-    });
-  } catch (error) {
-    console.error("Lỗi cập nhật cài đặt quyền riêng tư:", error);
-    res.status(500).json({ message: "Lỗi server" });
-  }
-};
 const createPrivacyDefault = async (userId) => {
   const defaultSettings = [
     { user_id: userId, key: "profile", privacy_level: "public" },
     { user_id: userId, key: "profile.email", privacy_level: "public" },
-    { user_id: userId, key: "profile.phone", privacy_level: "public" },
+    { user_id: userId, key: "profile.post", privacy_level: "public" },
+    { user_id: userId, key: "profile.photo", privacy_level: "public" },
+    { user_id: userId, key: "profile.video", privacy_level: "public" },
     { user_id: userId, key: "profile.friend", privacy_level: "public" },
     { user_id: userId, key: "profile.group", privacy_level: "public" },
   ];
@@ -464,7 +442,9 @@ const updateMultiPrivacySetting = async (req, res) => {
   const allowedKeys = [
     "profile",
     "profile.email",
-    "profile.phone",
+    "profile.post",
+    "profile.photo",
+    "profile.video",
     "profile.friend",
     "profile.group",
   ];
@@ -472,7 +452,7 @@ const updateMultiPrivacySetting = async (req, res) => {
   try {
     const bulkOps = settings
       .filter(({ key }) => allowedKeys.includes(key))
-      .map(({ key, privacy_level, custom_group }) => ({
+      .map(({ key, privacy_level }) => ({
         updateOne: {
           filter: { user_id: userId, key },
           update: { privacy_level },
@@ -494,11 +474,134 @@ const updateMultiPrivacySetting = async (req, res) => {
     res.status(500).json({ message: "Lỗi server" });
   }
 };
+async function isFriend(userA, userB) {
+  if (!userA || !userB) return false;
+  const friendship = await Friendship.findOne({
+    $or: [
+      { user_id_1: userA, user_id_2: userB },
+      { user_id_1: userB, user_id_2: userA },
+    ],
+    status: "accepted",
+  });
+  return !!friendship;
+}
+const getProfileWithPrivacy = async (req, res) => {
+  const viewerId = req.user?._id;
+  const profileUserId = req.params.userId;
+
+  try {
+    const user = await User.findById(profileUserId).select(
+      "-hash -salt -isDeleted"
+    );
+    if (!user)
+      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+
+    const settingsArr = await UserSetting.find({ user_id: profileUserId });
+    const privacyMap = {};
+    settingsArr.forEach((s) => {
+      privacyMap[s.key] = s.privacy_level;
+    });
+
+    // Hàm kiểm tra quyền truy cập từng trường/tab
+    const canView = async (key) => {
+      const level = privacyMap[key] || "public";
+      if (level === "public") return true;
+      if (level === "private") return false;
+      if (level === "friends") {
+        if (!viewerId) return false;
+        if (viewerId.toString() === profileUserId.toString()) return true;
+        return await isFriend(viewerId, profileUserId);
+      }
+      return false;
+    };
+
+    // Nếu profile là private thì ẩn hết các trường nhạy cảm và tab
+    if (privacyMap["profile"] === "private") {
+      return res.json({
+        profile: {
+          _id: user._id,
+          username: user.username,
+          fullName: user.fullName,
+          avatar_url: user.avatar_url,
+          cover_photo_url: user.cover_photo_url,
+          bio: null,
+          email: null,
+        },
+        canViewPosts: false,
+        canViewPhotos: false,
+        canViewVideos: false,
+        canViewFriends: false,
+        canViewGroups: false,
+        privacy: privacyMap,
+      });
+    }
+    if (privacyMap["profile"] === "friends") {
+      // Nếu profile là friends thì chỉ cho phép xem các trường/tab nếu là bạn bè
+      const bool = await isFriend(viewerId, profileUserId);
+      if (!bool) {
+        return res.json({
+          profile: {
+            _id: user._id,
+            username: user.username,
+            fullName: user.fullName,
+            avatar_url: user.avatar_url,
+            cover_photo_url: user.cover_photo_url,
+            bio: null,
+            email: null,
+          },
+          canViewPosts: false,
+          canViewPhotos: false,
+          canViewVideos: false,
+          canViewFriends: false,
+          canViewGroups: false,
+          privacy: privacyMap,
+        });
+      }
+    }
+
+    // Nếu profile là public hoặc friends thì các trường/tab sẽ xét quyền riêng
+    const [
+      canViewPosts,
+      canViewPhotos,
+      canViewVideos,
+      canViewFriends,
+      canViewGroups,
+    ] = await Promise.all([
+      canView("profile.post"),
+      canView("profile.photo"),
+      canView("profile.video"),
+      canView("profile.friend"),
+      canView("profile.group"),
+    ]);
+
+    const profileData = {
+      _id: user._id,
+      username: user.username,
+      fullName: user.fullName,
+      avatar_url: user.avatar_url,
+      cover_photo_url: user.cover_photo_url,
+      bio: (await canView("profile")) ? user.bio : null,
+      email: (await canView("profile.email")) ? user.email : null,
+    };
+
+    res.json({
+      profile: profileData,
+      canViewPosts,
+      canViewPhotos,
+      canViewVideos,
+      canViewFriends,
+      canViewGroups,
+      privacy: privacyMap,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 module.exports = {
   registerUser,
   verifyEmail,
   loginUser,
-  PrivacySetting,
   logoutUser,
   logoutAllUser,
   changePassword,
@@ -511,5 +614,6 @@ module.exports = {
   getUserPrivacy,
   createPrivacyDefault,
   updateMultiPrivacySetting,
-  getUserById
+  getUserById,
+  getProfileWithPrivacy,
 };
