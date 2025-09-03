@@ -8,6 +8,7 @@ const PostReaction = require("../models/Comment_Reaction/post_reaction.model");
 const mongoose = require("mongoose");
 const User = require("../models/user.model");
 const notificationService = require("../services/notification.service");
+const GroupPostReport = require("../models/Group/group_postReport.model");
 const { getSocketIO, getUserSocketMap } = require("../socket/io-instance");
 
 // Hàm kiểm tra quyền admin trong group
@@ -430,7 +431,7 @@ const getPendingPostsInGroup = async (req, res) => {
 
         const posts = await GroupPost.find({ group_id, status: "pending", is_deleted: false })
             .sort({ created_at: -1 })
-            .populate("user_id", "username")
+            .populate("user_id", "username fullName avatar_url")
             .lean();
 
         const populatedPosts = await Promise.all(
@@ -451,6 +452,205 @@ const getPendingPostsInGroup = async (req, res) => {
         );
 
         res.json(populatedPosts);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+// Report bài viết trong group
+const reportGroupPost = async (req, res) => {
+    try {
+        const { post_id } = req.params;
+        const { reason, description } = req.body;
+        const user_id = req.user._id;
+
+        // Kiểm tra bài viết tồn tại
+        const post = await GroupPost.findById(post_id);
+        if (!post || post.is_deleted) {
+            return res.status(404).json({ message: "Post not found" });
+        }
+
+        // Kiểm tra user có phải thành viên group không
+        const member = await GroupMember.findOne({
+            group: post.group_id,
+            user: user_id,
+            status: "approved"
+        });
+        if (!member) {
+            return res.status(403).json({ error: "Bạn không phải thành viên nhóm này." });
+        }
+
+        // Không cho phép report bài viết của chính mình
+        if (post.user_id.toString() === user_id.toString()) {
+            return res.status(400).json({ message: "Không thể report bài viết của chính mình" });
+        }
+
+        // Kiểm tra đã report chưa (unique index sẽ tự động prevent duplicate)
+        const existingReport = await GroupPostReport.findOne({
+            group_post_id: post_id,
+            reporter_id: user_id
+        });
+        if (existingReport) {
+            return res.status(400).json({ message: "Bạn đã báo cáo bài viết này rồi" });
+        }
+
+        // Tạo report mới
+        await GroupPostReport.create({
+            group_post_id: post_id,
+            group_id: post.group_id,
+            reporter_id: user_id,
+            reason,
+            description
+        });
+        res.json({
+            message: "Đã báo cáo bài viết thành công",
+        });
+    } catch (err) {
+        console.error("Report error:", err);
+        if (err.code === 11000) {
+            return res.status(400).json({ message: "Bạn đã báo cáo bài viết này rồi" });
+        }
+        res.status(500).json({ error: err.message });
+    }
+};
+
+// Lấy danh sách bài viết bị báo cáo trong group (dành cho admin)
+const getReportedPostsInGroup = async (req, res) => {
+    try {
+        const { group_id } = req.params;
+        const user_id = req.user._id;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const skip = (page - 1) * limit;
+
+        // Kiểm tra quyền admin
+        const isAdmin = await isGroupAdmin(group_id, user_id);
+        if (!isAdmin) {
+            return res.status(403).json({ message: "Only admin can view reported posts" });
+        }
+
+        // Aggregate để lấy các post có report
+        const reportedPosts = await GroupPostReport.aggregate([
+            { $match: { group_id: new mongoose.Types.ObjectId(group_id), status: "pending" } },
+            { $group: { _id: "$group_post_id", reportCount: { $sum: 1 } } },
+            { $match: { reportCount: { $gt: 0 } } },
+            { $sort: { reportCount: -1 } },
+            { $skip: skip },
+            { $limit: limit }
+        ]);
+
+        const posts = await Promise.all(reportedPosts.map(async (item) => {
+            const post = await GroupPost.findById(item._id)
+                .populate("user_id", "username fullName avatar_url")
+                .lean();
+
+            if (!post || post.is_deleted) return null;
+
+            const postMedia = await PostMedia.findOne({ postgr_id: post._id }).populate("media_id");
+            let media = [];
+            if (postMedia?.media_id?.length > 0) {
+                media = postMedia.media_id.map(m => ({
+                    url: m.url,
+                    type: m.media_type
+                }));
+            }
+
+            return {
+                ...post,
+                media,
+                report_count: item.reportCount
+            };
+        }));
+
+        res.json({ posts: posts.filter(Boolean), page, limit });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+const getReportsForPost = async (req, res) => {
+    try {
+        const { post_id } = req.params;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const skip = (page - 1) * limit;
+
+        const reports = await GroupPostReport.find({
+            group_post_id: post_id,
+            status: "pending"
+        })
+            .populate("reporter_id", "username fullName")
+            .skip(skip)
+            .limit(limit)
+            .lean();
+
+        const total = await GroupPostReport.countDocuments({
+            group_post_id: post_id,
+            status: "pending"
+        });
+
+        res.json({ reports, total, page, limit });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+// Xử lý report (dành cho admin)
+const handleGroupPostReport = async (req, res) => {
+    try {
+        const { post_id } = req.params;
+        const { action } = req.body; // "dismiss_reports" hoặc "delete_post"
+        const admin_id = req.user._id;
+
+        // Tìm bài viết và kiểm tra quyền admin
+        const post = await GroupPost.findById(post_id);
+        if (!post || post.is_deleted) {
+            return res.status(404).json({ message: "Post not found" });
+        }
+
+        const isAdmin = await isGroupAdmin(post.group_id, admin_id);
+        if (!isAdmin) {
+            return res.status(403).json({ message: "Only admin can handle reports" });
+        }
+
+        if (action === "dismiss_reports") {
+            // Đánh dấu tất cả report là "dismissed"
+            await GroupPostReport.updateMany(
+                { group_post_id: post_id, status: "pending" },
+                {
+                    status: "dismissed",
+                    reviewed_by: admin_id,
+                    reviewed_at: new Date()
+                }
+            );
+            res.json({ message: "All reports dismissed successfully" });
+
+        } else if (action === "delete_post") {
+            // Xóa mềm bài viết
+            post.is_deleted = true;
+            post.deleted_at = new Date();
+            await post.save();
+
+            // +1 vào count_violations của member trong group
+            await GroupMember.findOneAndUpdate(
+                { group: post.group_id, user: post.user_id },
+                { $inc: { count_violations: 1 } }
+            );
+
+            // Đánh dấu tất cả report là "reviewed"
+            await GroupPostReport.updateMany(
+                { group_post_id: post_id, status: "pending" },
+                {
+                    status: "reviewed",
+                    reviewed_by: admin_id,
+                    reviewed_at: new Date()
+                }
+            );
+            res.json({ message: "Post deleted and reports processed successfully" });
+
+        } else {
+            return res.status(400).json({ message: "Invalid action. Use 'dismiss_reports' or 'delete_post'" });
+        }
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -584,5 +784,9 @@ module.exports = {
     removeGroupPostReaction,
     getReactionsOfGroupPost,
     getUserReactionsForGroupPosts,
-    getGroupFeed
+    getGroupFeed,
+    reportGroupPost,
+    getReportedPostsInGroup,
+    handleGroupPostReport,
+    getReportsForPost
 };

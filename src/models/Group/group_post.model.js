@@ -12,5 +12,8 @@ const groupPostSchema = new mongoose.Schema({
   created_at: { type: Date, default: Date.now },
   updated_at: { type: Date, default: Date.now }
 });
+groupPostSchema.index({ group_id: 1, user_id: 1, status: 1, is_deleted: 1 });
+groupPostSchema.index({ group_id: 1, created_at: -1 });
+groupPostSchema.index({ user_id: 1, group_id: 1, created_at: -1 });
 
 module.exports = mongoose.model("GroupPost", groupPostSchema);

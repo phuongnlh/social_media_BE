@@ -2,7 +2,12 @@ const Group = require("../models/Group/group.model");
 const GroupMember = require("../models/Group/group_member.model");
 const GroupRequest = require("../models/Group/group_request.model");
 const GroupPost = require("../models/Group/group_post.model");
+const Comment = require("../models/Comment_Reaction/comment.model");
+const CommentReaction = require("../models/Comment_Reaction/comment_reactions.model");
+const PostReaction = require("../models/Comment_Reaction/post_reaction.model");
+const PostMedia = require("../models/postMedia.model");
 const notificationService = require("../services/notification.service");
+const { Types } = require('mongoose');
 const { getSocketIO, getUserSocketMap } = require("../socket/io-instance");
 
 // Hàm kiểm tra quyền admin trong group
@@ -84,13 +89,161 @@ const getMyGroups = async (req, res) => {
 
 // Lấy danh sách thành viên (Người ngoài có thể xem được thành viên)
 const getGroupMembers = async (req, res) => {
-    try {
-        const { group_id } = req.params;
-        const members = await GroupMember.find({ group: group_id, status: "approved" }).populate("user", "username fullName avatar_url");
-        res.status(200).json({ members });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+  try {
+    const { group_id } = req.params;
+    if (!Types.ObjectId.isValid(group_id)) {
+      return res.status(400).json({ error: 'group_id không hợp lệ' });
     }
+
+    const {
+      search,
+      roles,
+      sort = 'role,-postCount,name',
+      minViolations,
+      maxViolations,
+      skip,
+      limit
+    } = req.query;
+
+    // parse roles
+    const roleArr = roles
+      ? String(roles).split(',').map(s => s.trim()).filter(Boolean)
+      : null;
+
+    // parse sort "role,-postCount,name" -> sortObj cho $sort
+    const toSortObj = (s) => {
+      const map = {
+        role: 'roleWeight',
+        name: 'user.fullName',
+        username: 'user.username',
+        postCount: 'postCount'
+      };
+      return String(s).split(',').reduce((acc, key) => {
+        key = key.trim();
+        if (!key) return acc;
+        const dir = key.startsWith('-') ? -1 : 1;
+        const field = key.replace(/^-/, '');
+        acc[map[field] || field] = dir;
+        return acc;
+      }, {});
+    };
+    const sortObj = toSortObj(sort);
+    const defaultSort = { roleWeight: 1, postCount: -1, 'user.fullName': 1 };
+
+    // base filter
+    const matchStage = {
+      group: new Types.ObjectId(group_id),
+      status: 'approved',
+      is_removed: { $ne: true }
+    };
+    if (roleArr?.length) matchStage.role = { $in: roleArr };
+    if (minViolations !== undefined) {
+      matchStage.count_violations = {
+        ...(matchStage.count_violations || {}),
+        $gte: Number(minViolations)
+      };
+    }
+    if (maxViolations !== undefined) {
+      matchStage.count_violations = {
+        ...(matchStage.count_violations || {}),
+        $lte: Number(maxViolations)
+      };
+    }
+
+    const pipeline = [
+      { $match: matchStage },
+
+      { 
+        $lookup: { 
+          from: 'users', 
+          localField: 'user', 
+          foreignField: '_id', 
+          as: 'user',
+          pipeline: [
+            {
+              $project: {
+                _id: 1,
+                username: 1,
+                fullName: 1,
+                avatar_url: 1
+              }
+            }
+          ]
+        } 
+      },
+      { $unwind: '$user' },
+
+      // Search theo tên / username (không phân biệt hoa thường)
+      ...(search ? [{
+        $match: {
+          $or: [
+            { 'user.fullName': { $regex: search, $options: 'i' } },
+            { 'user.username': { $regex: search, $options: 'i' } }
+          ]
+        }
+      }] : []),
+
+      // Lookup đếm bài đã duyệt của user trong group
+      {
+        $lookup: {
+          from: 'groupposts', // collection mặc định của model GroupPost
+          let: { uid: '$user._id', gid: '$group' },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ['$user_id', '$$uid'] },
+                    { $eq: ['$group_id', '$$gid'] }
+                  ]
+                },
+                status: 'approved',
+                is_deleted: false
+              }
+            },
+            { $count: 'count' }
+          ],
+          as: 'postStats'
+        }
+      },
+
+      // Tính postCount & roleWeight (admin trước)
+      {
+        $addFields: {
+          postCount: { $ifNull: [{ $arrayElemAt: ['$postStats.count', 0] }, 0] },
+          roleWeight: {
+            $switch: {
+              branches: [{ case: { $eq: ['$role', 'admin'] }, then: 0 }],
+              default: 1 // member
+            }
+          }
+        }
+      },
+
+      // Sort
+      { $sort: Object.keys(sortObj).length ? sortObj : defaultSort },
+      
+      {
+        $project: {
+          postStats: 0,
+          '__v': 0
+        }
+      },
+
+      // Phân trang (nếu truyền)
+      ...(skip ? [{ $skip: Number(skip) }] : []),
+      ...(limit ? [{ $limit: Number(limit) }] : [])
+    ];
+
+    const members = await GroupMember.aggregate(pipeline)
+      .collation({ locale: 'vi', strength: 1 }) // sort tên có dấu
+      .exec();
+
+    return res.status(200).json({ members });
+  } catch (err) {
+    console.error('getGroupMembers error:', err);
+    return res.status(500).json({ error: err.message });
+  }
 };
 
 // Gửi yêu cầu tham gia group (nếu private)
@@ -273,7 +426,7 @@ const getPendingRequests = async (req, res) => {
         const isAdmin = await isGroupAdmin(group_id, admin_id);
         if (!isAdmin) return res.status(403).json({ error: "Permission denied" });
 
-        const requests = await GroupRequest.find({ group_id, status: "pending" }).populate("user_id", "username");
+        const requests = await GroupRequest.find({ group_id, status: "pending" }).populate("user_id", "username fullName avatar_url");
         res.status(200).json({ requests });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -315,18 +468,108 @@ const changeMemberRole = async (req, res) => {
     }
 };
 
+// Tự hạ quyền bản thân (nếu là admin) || Chuyển đổi quyền Creator cho 1 admin khác
+const demoteOrTransferCreator = async (req, res) => {
+    try {
+        const { group_id, action, new_creator_id } = req.body; // action: "demote" hoặc "transfer_creator"
+        const current_user_id = req.user._id;
+
+        if (!["demote", "transfer_creator"].includes(action)) {
+            return res.status(400).json({ error: "Invalid action. Use 'demote' or 'transfer_creator'" });
+        }
+
+        // Lấy group và kiểm tra
+        const group = await Group.findById(group_id);
+        if (!group) return res.status(404).json({ error: "Group not found" });
+
+        // Lấy thông tin member hiện tại
+        const currentMember = await GroupMember.findOne({ 
+            group: group_id, 
+            user: current_user_id, 
+            status: "approved" 
+        });
+        if (!currentMember) return res.status(404).json({ error: "You are not a member of this group" });
+
+        // 1. Tự hạ quyền (admin → member)
+        if (action === "demote") {
+            if (currentMember.role !== "admin") {
+                return res.status(400).json({ error: "You are not an admin" });
+            }
+
+            // Creator không thể tự hạ quyền
+            if (group.creator.toString() === current_user_id.toString()) {
+                return res.status(400).json({ error: "Creator cannot demote themselves. Transfer creator role first." });
+            }
+
+            // Hạ quyền từ admin → member
+            currentMember.role = "member";
+            await currentMember.save();
+
+            return res.status(200).json({ 
+                message: "Successfully demoted yourself to member", 
+                member: currentMember 
+            });
+        }
+
+        // 2. Chuyển quyền Creator (chỉ creator mới làm được)
+        if (action === "transfer_creator") {
+            if (group.creator.toString() !== current_user_id.toString()) {
+                return res.status(403).json({ error: "Only the current creator can transfer creator role" });
+            }
+
+            if (!new_creator_id) {
+                return res.status(400).json({ error: "new_creator_id is required for transfer_creator action" });
+            }
+
+            // Kiểm tra người nhận có phải admin không
+            const newCreatorMember = await GroupMember.findOne({
+                group: group_id,
+                user: new_creator_id,
+                role: "admin",
+                status: "approved"
+            });
+
+            if (!newCreatorMember) {
+                return res.status(400).json({ error: "New creator must be an admin member of the group" });
+            }
+
+            // Chuyển creator trong Group model
+            group.creator = new_creator_id;
+            await group.save();
+
+            // Current creator vẫn giữ role admin (không tự động hạ quyền)
+            
+            return res.status(200).json({ 
+                message: "Creator role transferred successfully", 
+                newCreator: new_creator_id,
+                group 
+            });
+        }
+
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
 // Chỉnh sửa thông tin nhóm (chỉ admin)
 const updateGroup = async (req, res) => {
     try {
         const { group_id } = req.params;
-        const { name, description, privacy, cover_url, post_approval } = req.body;
+        const { name, description, privacy, post_approval } = req.body;
         const admin_id = req.user._id;
         const isAdmin = await isGroupAdmin(group_id, admin_id);
         if (!isAdmin) return res.status(403).json({ error: "Permission denied" });
 
+        // Xử lý cover_url từ file upload (nếu có)
+        let updateData = { name, description, privacy, post_approval };
+
+        if (req.files && req.files.length > 0) {
+            updateData.cover_url = req.files[0].path;
+        }
+
         const group = await Group.findByIdAndUpdate(
             group_id,
-            { name, description, privacy, cover_url, post_approval },
+            updateData,
             { new: true, runValidators: true }
         );
         if (!group) return res.status(404).json({ error: "Group not found" });
@@ -344,10 +587,52 @@ const deleteGroup = async (req, res) => {
         const isAdmin = await isGroupAdmin(group_id, admin_id);
         if (!isAdmin) return res.status(403).json({ error: "Permission denied" });
 
+        // 1. Lấy tất cả post IDs của group
+        const groupPosts = await GroupPost.find({ group_id }).select('_id');
+        const postIds = groupPosts.map(post => post._id);
+
+        // 2. Lấy tất cả comment IDs từ các group posts
+        const comments = await Comment.find({ 
+            postgr_id: { $in: postIds } 
+        }).select('_id');
+        const commentIds = comments.map(comment => comment._id);
+
+        // 3. Xóa tất cả dữ liệu liên quan theo thứ tự đúng
+        await Promise.all([
+            // 3a. Xóa comment reactions trước
+            CommentReaction.deleteMany({ 
+                comment_id: { $in: commentIds } 
+            }),
+            
+            // 3b. Xóa post reactions
+            PostReaction.deleteMany({ 
+                postgr_id: { $in: postIds } 
+            }),
+            
+            // 3c. Xóa media của posts
+            PostMedia.deleteMany({ 
+                postgr_id: { $in: postIds } 
+            }),
+        ]);
+
+        // 4. Xóa comments (sau khi đã xóa reactions)
+        await Comment.deleteMany({ 
+            postgr_id: { $in: postIds } 
+        });
+
+        // 5. Xóa group posts (sau khi đã xóa comments và reactions)
+        await GroupPost.deleteMany({ group_id });
+
+        // 6. Xóa members và requests
+        await Promise.all([
+            GroupMember.deleteMany({ group: group_id }),
+            GroupRequest.deleteMany({ group_id }),
+        ]);
+
+        // 7. Cuối cùng xóa group
         await Group.findByIdAndDelete(group_id);
-        await GroupMember.deleteMany({ group: group_id });
-        await GroupRequest.deleteMany({ group_id });
-        res.status(200).json({ message: "Group deleted" });
+
+        res.status(200).json({ message: "Group and all related data deleted successfully" });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -360,6 +645,12 @@ const banMember = async (req, res) => {
         const admin_id = req.user._id;
         const isAdmin = await isGroupAdmin(group_id, admin_id);
         if (!isAdmin) return res.status(403).json({ error: "Permission denied" });
+
+        const targetMember = await GroupMember.findOne({ group: group_id, user: user_id });
+        if (!targetMember) return res.status(404).json({ error: "Member not found" });
+        if (targetMember.role === "admin") {
+            return res.status(403).json({ error: "Need to demote before banning" });
+        }
 
         const member = await GroupMember.findOneAndUpdate(
             { group: group_id, user: user_id },
@@ -429,7 +720,7 @@ const restrictMember = async (req, res) => {
         until.setDate(until.getDate() + days)
 
         const member = await GroupMember.findOneAndUpdate(
-            { group: group_id, user: user_id, status: "banned" },
+            { group: group_id, user: user_id, status: "approved" },
             {
                 restrict_post_until: until,
                 restrict_reason: restrict_reason || null
@@ -464,7 +755,7 @@ const restrictMember = async (req, res) => {
 const getRestrictMemberList = async (req, res) => {
     try {
         const { group_id } = req.params
-        admin_id = req.user._id
+        const admin_id = req.user._id
         const isAdmin = await isGroupAdmin(group_id, admin_id);
         if (!isAdmin) return res.status(403).json({ error: "Pemission denied" })
 
@@ -483,7 +774,7 @@ const getRestrictMemberList = async (req, res) => {
 const getbannedMemberList = async (req, res) => {
     try {
         const { group_id } = req.params
-        admin_id = req.user._id
+        const admin_id = req.user._id
         const isAdmin = await isGroupAdmin(group_id, admin_id);
         if (!isAdmin) return res.status(403).json({ error: "Pemission denied" })
 
@@ -546,5 +837,5 @@ module.exports = {
     restrictMember,
     getRestrictMemberList,
     getbannedMemberList,
-    getUserGroups
+    demoteOrTransferCreator
 };

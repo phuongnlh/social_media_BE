@@ -14,32 +14,31 @@ const {
 //* Comment:
 // Đếm số lượng bình luận của một bài viết
 const getGroupPostCommentCount = async (req, res) => {
-    try {
-        const { postgr_id } = req.params;
-        
-        const count = await Comment.countDocuments({ 
-            postgr_id, 
-            isDeleted: false 
-        });
-        
-        res.status(200).json({ count });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+  try {
+    const { postgr_id } = req.params;
+
+    const count = await Comment.countDocuments({
+      postgr_id,
+      isDeleted: false
+    });
+
+    res.status(200).json({ count });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
 
 
 // Tạo bình luận mới
 const createComment = async (req, res) => {
+  const MAX_DEPTH = 2;
   try {
     const { post_id, postgr_id, content, parent_comment_id } = req.body;
     const user_id = req.user._id;
 
     // Chỉ nhận 1 trong 2: post_id hoặc postgr_id
     if (!post_id && !postgr_id) {
-      return res
-        .status(400)
-        .json({ error: "Must provide post_id or postgr_id" });
+      return res.status(400).json({ error: "Must provide post_id or postgr_id" });
     }
 
     let media = undefined;
@@ -51,13 +50,56 @@ const createComment = async (req, res) => {
       };
     }
 
+    let level = 0, root_id = null, thread_parent_id = null, ancestors = [], reply_to_comment_id = null;
+
+    if (parent_comment_id) {
+      const parent = await Comment.findById(parent_comment_id).lean();
+      if (!parent) {
+        return res.status(400).json({ error: "Parent not found" });
+      }
+
+      const pLevel = parent.level ?? 0;
+      level = Math.min(pLevel + 1, MAX_DEPTH);
+
+      // root_id: id comment cấp 0 của thread
+      if (pLevel === 0) {
+        root_id = parent._id;
+      } else {
+        root_id = parent.root_id ?? parent._id;
+      }
+
+      // thread_parent_id: luôn là ID của comment cấp 1 trong nhánh
+      if (pLevel === 0) {
+        // reply vào root -> nếu tạo ra level 1 thì thread_parent_id có thể set về root
+        thread_parent_id = parent._id;
+      } else if (pLevel === 1) {
+        // reply vào level 1 -> thread_parent_id PHẢI là chính parent._id
+        thread_parent_id = parent._id;
+      } else {
+        // reply vào level 2 -> giữ nhánh của parent
+        thread_parent_id = parent.thread_parent_id || parent._id;
+      }
+
+      // ancestors: tối đa 2 phần tử [root, level1]
+      if (pLevel === 0) {
+        ancestors = [parent._id];
+      } else if (pLevel === 1) {
+        ancestors = [parent.root_id ?? parent._id, parent._id];
+      } else {
+        const l1Id = parent.thread_parent_id ?? parent._id;
+        const rId = parent.root_id ?? (parent.ancestors?.[0] ?? l1Id);
+        ancestors = [rId, l1Id];
+      }
+
+      reply_to_comment_id = parent_comment_id;
+    }
+
     const comment = await Comment.create({
-      user_id,
-      post_id,
-      postgr_id,
-      content,
+      user_id, post_id, postgr_id, content,
       parent_comment_id,
       media,
+      level, root_id, thread_parent_id, ancestors,
+      reply_to_comment_id
     });
 
     // Gửi thông báo
@@ -128,39 +170,97 @@ const createComment = async (req, res) => {
   }
 };
 
-// Lấy tất cả bình luận của 1 bài viết (chỉ lấy comment chưa xóa)
-//TODO Phân cấp tạm thời (sau này cải tiến lại)
+// Lấy tất cả bình luận của 1 bài viết
 const getCommentsOfPost = async (req, res) => {
   try {
     const { post_id, postgr_id } = req.params;
+    const filter = { isDeleted: false };
+    if (post_id) filter.post_id = new mongoose.Types.ObjectId(post_id);
+    if (postgr_id) filter.postgr_id = new mongoose.Types.ObjectId(postgr_id);
 
-        let filter = { isDeleted: false };
+    const all = await Comment.find(filter)
+      .populate("user_id", "fullName avatar_url")
+      .sort({ createdAt: 1 })
+      .lean();
 
-        if (post_id) filter.post_id = new mongoose.Types.ObjectId(post_id);
-        if (postgr_id) filter.postgr_id = new mongoose.Types.ObjectId(postgr_id);
+    const roots = all.filter(c => (c.level ?? 0) === 0);
+    const level1 = all.filter(c => c.level === 1);
+    const level2 = all.filter(c => c.level === 2);
 
-        const comments = await Comment.find(filter)
-            .populate("user_id", "fullName avatar_url")
-            .sort({ createdAt: 1 });
+    // index nhanh để suy luận quan hệ
+    const byId = new Map(all.map(c => [String(c._id), c]));
 
-        const commentMap = {};
-        const roots = [];
+    // Gom cấp 1 theo root (chịu trường hợp parent_comment_id bị thiếu)
+    const childrenL1 = new Map(); // rootId -> [l1...]
+    for (const c of level1) {
+      const rootKey =
+        c.parent_comment_id
+          ? String(c.parent_comment_id)
+          : (c.root_id ? String(c.root_id) : null);
+      if (!rootKey) continue;
+      if (!childrenL1.has(rootKey)) childrenL1.set(rootKey, []);
+      childrenL1.get(rootKey).push(c);
+    }
 
-        comments.forEach(comment => {
-            comment = comment.toObject();
-            comment.replies = [];
-            commentMap[comment._id] = comment;
-        });
+    // Helper: tìm id "đầu nhánh" cấp 1 cho 1 comment cấp 2
+    const getL1Key = (c2) => {
+      // 1) Ưu tiên thread_parent_id nếu đã có và là id cấp 1
+      if (c2.thread_parent_id) return String(c2.thread_parent_id);
 
-        comments.forEach(comment => {
-            if (comment.parent_comment_id && commentMap[comment.parent_comment_id]) {
-                commentMap[comment.parent_comment_id].replies.push(commentMap[comment._id]);
-            } else {
-                roots.push(commentMap[comment._id]);
-            }
-        });
+      // 2) ancestors[1] (schema bạn có ancestors: [root, level1])
+      if (Array.isArray(c2.ancestors) && c2.ancestors.length >= 2) {
+        return String(c2.ancestors[1]);
+      }
 
-    res.status(200).json({ comments: roots });
+      // 3) lần ngược theo parent
+      if (c2.parent_comment_id) {
+        const p = byId.get(String(c2.parent_comment_id));
+        if (p) {
+          if ((p.level ?? 0) === 1) return String(p._id); // parent là cấp 1
+          if (p.level === 2) {
+            // parent là cấp 2 -> bám theo nhánh của parent
+            return String(p.thread_parent_id || p._id);
+          }
+          if ((p.level ?? 0) === 0) {
+            // parent là root (dữ liệu sai), coi root như "đầu nhánh"
+            return String(p._id);
+          }
+        }
+      }
+
+      // 4) cuối cùng: dùng root_id nếu có (ít chính xác hơn)
+      if (c2.root_id) return String(c2.root_id);
+
+      return null;
+    };
+
+    // Gom cấp 2 theo đầu nhánh (id của comment cấp 1)
+    const childrenL2ByThread = new Map(); // l1Id -> [l2...]
+    for (const c of level2) {
+      const l1Key = getL1Key(c);
+      if (!l1Key) continue;
+      if (!childrenL2ByThread.has(l1Key)) childrenL2ByThread.set(l1Key, []);
+      childrenL2ByThread.get(l1Key).push(c);
+    }
+
+    // Build 0 -> 1 -> 2
+    const result = roots.map(r => {
+      const l1s = childrenL1.get(String(r._id)) || [];
+      const replies = l1s.map(l1 => {
+        const l2s = childrenL2ByThread.get(String(l1._id)) || [];
+        return {
+          ...l1,
+          replies: l2s.map(l2 => ({
+            ...l2,
+            replying_to: l2.reply_to_comment_id, // để FE hiện "Replying to ..."
+          })),
+          replies_count: l2s.length,
+        };
+      });
+      return { ...r, replies };
+    });
+
+    res.status(200).json({ comments: result });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -362,15 +462,15 @@ const getUserReactionsForComments = async (req, res) => {
 };
 
 module.exports = {
-    createComment,
-    getCommentsOfPost,
-    editComment,
-    softDeleteComment,
-    restoreComment,
-    reactToComment,
-    removeCommentReaction,
-    getReactionsOfComment,
-    getUserReactionsForComments,
-    getGroupPostCommentCount,
-    countCommentsOfPost
+  createComment,
+  getCommentsOfPost,
+  editComment,
+  softDeleteComment,
+  restoreComment,
+  reactToComment,
+  removeCommentReaction,
+  getReactionsOfComment,
+  getUserReactionsForComments,
+  getGroupPostCommentCount,
+  countCommentsOfPost
 };
