@@ -10,6 +10,8 @@ const notificationRoutes = require("./notification.route");
 const channelRoutes = require("./channel.route");
 const mediaRoutes = require("./media.route");
 const agoraRoutes = require("./agora.route");
+const adsRoutes = require("./ads.route");
+const paymentRoutes = require("./payment.route");
 const router = express.Router();
 
 router.get("/", (req, res) => {
@@ -27,5 +29,7 @@ router.use("/notifications", notificationRoutes);
 router.use("/channels", channelRoutes);
 router.use("/media", mediaRoutes);
 router.use("/agora", agoraRoutes);
+router.use("/ads", adsRoutes);
+router.use("/payment", paymentRoutes);
 
 module.exports = router;

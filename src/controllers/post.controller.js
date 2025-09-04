@@ -85,21 +85,24 @@ const getPostById = async (req, res) => {
   try {
     const postId = req.params.id;
     const userId = req.user._id;
-    // Tìm bài đăng theo ID
-    const post = await Post.findById(postId).lean();
+    
+    // Tìm bài đăng theo ID và populate thông tin user
+    const post = await Post.findById(postId)
+      .populate("user_id", "username avatar_url fullName")
+      .lean();
 
     if (!post)
       return res.status(404).json({ message: "Không tìm thấy bài đăng" });
 
     // Kiểm tra nếu bài đăng đã bị xóa và người yêu cầu không phải tác giả
-    if (post.isDeleted && post.user_id.toString() !== userId.toString()) {
+    if (post.isDeleted && post.user_id._id.toString() !== userId.toString()) {
       return res.status(410).json({ message: "Bài đăng đã bị xóa" });
     }
 
     // Kiểm tra quyền truy cập nếu bài đăng ở chế độ riêng tư
     if (
       post.type === "Private" &&
-      post.user_id.toString() !== userId.toString()
+      post.user_id._id.toString() !== userId.toString()
     ) {
       return res.status(403).json({ message: "Không có quyền truy cập" });
     }
@@ -115,8 +118,13 @@ const getPostById = async (req, res) => {
         type: m.media_type,
       }));
     }
+
+    // Destructure để rename user_id thành author
+    const { user_id, ...rest } = post;
+    
     res.json({
-      ...post,
+      ...rest,
+      author: user_id, // Rename user_id => author và bao gồm username, fullName, avatar_url
       media,
     });
   } catch (err) {
@@ -440,11 +448,14 @@ const getRecommendPost = async (req, res) => {
 const getAllPostsbyUserId = async (req, res) => {
   try {
     const userId = req.params.userId;
+    const { media_only } = req.query; // Tham số query để lọc posts có media
+    
     // Tìm tất cả bài đăng không bị xóa của người dùng, sắp xếp theo thời gian giảm dần
     const posts = await Post.find({ user_id: userId, is_deleted: false })
       .sort({ createdAt: -1 })
       .populate("user_id", "username avatar_url fullName") // Nạp thông tin người dùng
       .lean();
+    
     // Nạp thông tin media cho mỗi bài đăng
     const populatedPosts = await Promise.all(
       posts.map(async (post) => {
@@ -468,7 +479,14 @@ const getAllPostsbyUserId = async (req, res) => {
         };
       })
     );
-    res.json(populatedPosts);
+    
+    // Lọc posts có media nếu media_only được truyền vào
+    let filteredPosts = populatedPosts;
+    if (media_only && (media_only === 'true' || media_only === '1')) {
+      filteredPosts = populatedPosts.filter(post => post.media && post.media.length > 0);
+    }
+    
+    res.json(filteredPosts);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
