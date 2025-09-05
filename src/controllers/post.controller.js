@@ -513,6 +513,16 @@ const searchPost = async (req, res) => {
   }
 };
 
+const increaseViewCount = async (req, res) => {
+  try {
+    const postId = req.params.id;
+    await Post.findByIdAndUpdate(postId, { $inc: { viewCount: 1 } });
+    res.status(200).json({ message: "View count increased" });
+  } catch (err) {
+    console.error(err);
+  }
+};
+
 module.exports = {
   createPost,
   getAllPostsbyUser,
@@ -529,4 +539,5 @@ module.exports = {
   getRecommendPost,
   getAllPostsbyUserId,
   searchPost,
+  increaseViewCount,
 };

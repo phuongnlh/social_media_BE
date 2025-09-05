@@ -1,7 +1,9 @@
+const { default: mongoose } = require("mongoose");
 const redisClient = require("../config/database.redis");
 const channelModel = require("../models/Chat/channel.model");
 const friendshipModel = require("../models/friendship.model");
 const messageModel = require("../models/message.model");
+const userModel = require("../models/user.model");
 
 // Tạo channel Private 1-1
 const createPrivateChannel = async (req, res) => {
@@ -95,6 +97,13 @@ const createGroupChannel = async (req, res) => {
       avatar,
       createdBy,
       members,
+    });
+
+    await messageModel.create({
+      channelId,
+      from: createdBy,
+      messageType: "system",
+      content: `${req.user.fullName} created the group "${name}" with ${members.length} members.`,
     });
 
     await channel.populate("members.userId", "fullName avatar_url email");
@@ -206,6 +215,23 @@ const addMemberToGroup = async (req, res) => {
     channel.members.push(...newMembers);
     await channel.save();
     await channel.populate("members.userId", "fullName avatar_url email");
+
+    // Thêm message system
+    newMembers.forEach((m) => {
+      channel.members.forEach((cm) => {
+        if (cm.userId._id.toString() === m.userId.toString()) {
+          m.fullName = cm.userId.fullName;
+        }
+      });
+    });
+    const memberNames = newMembers.map((m) => m.fullName).join(", ");
+
+    await messageModel.create({
+      channelId,
+      from: userId,
+      messageType: "system",
+      content: `${req.user.fullName} added ${memberNames} to the group.`,
+    });
 
     res.status(200).json({
       success: true,
@@ -350,6 +376,7 @@ const getUserChannels = async (req, res) => {
   try {
     const userId = req.user._id.toString();
 
+    // Lấy tất cả channel mà user tham gia
     const channels = await channelModel
       .find({
         "members.userId": userId,
@@ -358,38 +385,42 @@ const getUserChannels = async (req, res) => {
       .populate("members.userId", "fullName avatar_url email")
       .sort({ updatedAt: -1 });
 
-    // Tính số tin nhắn chưa đọc cho mỗi channel
-    const channelsWithUnreadCount = await Promise.all(
+    // Thêm lastMessage và unreadCount cho từng channel
+    const results = await Promise.all(
       channels.map(async (channel) => {
-        try {
-          // Đếm số tin nhắn trong channel mà user chưa đọc
-          const unreadCount = await messageModel.countDocuments({
-            channelId: channel.channelId,
-            from: { $ne: userId }, // Không tính tin nhắn của chính user
-            "readBy.userId": { $ne: userId }, // User chưa đọc
-          });
+        // Tin nhắn cuối cùng
+        const lastMsg = await messageModel
+          .findOne({ channelId: channel.channelId })
+          .sort({ createdAt: -1 })
+          .populate("from", "fullName avatar_url email");
 
-          return {
-            ...channel.toObject(),
-            unreadCount: unreadCount || 0,
-          };
-        } catch (error) {
-          console.error(
-            `Error calculating unread for channel ${channel.channelId}:`,
-            error
-          );
-          return {
-            ...channel.toObject(),
-            unreadCount: 0,
-          };
-        }
+        // Đếm tin chưa đọc
+        const unreadCount = await messageModel.countDocuments({
+          channelId: channel.channelId,
+          from: { $ne: userId },
+          "readBy.userId": { $ne: userId },
+        });
+
+        return {
+          ...channel.toObject(),
+          lastMessage: lastMsg
+            ? {
+                media: lastMsg.media[0]?.type || null,
+                content: lastMsg.content,
+                type: lastMsg.messageType,
+                from: lastMsg.from,
+              }
+            : null,
+          lastMessageTime: lastMsg ? lastMsg.createdAt : null,
+          unreadCount,
+        };
       })
     );
 
     res.status(200).json({
       success: true,
       message: "User channels retrieved successfully",
-      data: channelsWithUnreadCount,
+      data: results,
     });
   } catch (error) {
     res.status(500).json({
@@ -664,41 +695,64 @@ const getChannelChatList = async (req, res) => {
 const getChannelMessages = async (req, res) => {
   try {
     const { channelId } = req.params;
-    const { page = 1, limit = 20 } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
     const userId = req.user._id;
 
-    const skip = (page - 1) * parseInt(limit);
+    const skip = (page - 1) * limit;
 
     // Lấy deletedAt của user trong channel
     const channel = await channelModel.findOne(
       { channelId, "members.userId": userId },
       { "members.$": 1 }
     );
+
     const deletedAt = channel?.members?.[0]?.deletedAt || null;
 
-    // Tạo filter cho message
-    const messageFilter = { channelId };
-    if (deletedAt) {
-      messageFilter.createdAt = { $gt: deletedAt };
-    }
+    // Filter message theo deletedAt
+    const messageFilter = {
+      channelId,
+      ...(deletedAt && { createdAt: { $gt: deletedAt } }),
+    };
 
-    // Đếm tổng số message theo filter
+    // Đếm tổng số message
     const totalMessages = await messageModel.countDocuments(messageFilter);
 
-    // Lấy message
+    // Lấy message có phân trang
     const messages = await messageModel
       .find(messageFilter)
-      .populate("from", "fullName avatar_url")
+      .populate({
+        path: "from",
+        select: "fullName avatar_url",
+        options: { lean: true },
+      })
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(parseInt(limit));
+      .limit(limit)
+      .lean();
+
+    // Lấy thông tin call từ redis
+    const callInfo = await redisClient.hGetAll(
+      `active-call:info:${channel._id}`
+    );
+
+    let activeCall = null;
+    if (callInfo && Object.keys(callInfo).length > 0) {
+      activeCall = {
+        channelId,
+        channelCallId: callInfo.channelCallId,
+        callType: callInfo.callType,
+        startTime: callInfo.startTime,
+      };
+    }
 
     res.json({
       success: true,
       messages: messages.reverse(),
+      activeCall,
       pagination: {
-        currentPage: parseInt(page),
-        totalPages: Math.ceil(totalMessages / parseInt(limit)),
+        currentPage: page,
+        totalPages: Math.ceil(totalMessages / limit),
         totalMessages,
         hasMore: skip + messages.length < totalMessages,
       },
@@ -937,9 +991,14 @@ const deleteChat = async (req, res) => {
   const { channelId } = req.params;
   const userId = req.user._id;
   try {
-    const channel = await channelModel.findOne({ channelId, "members.userId": userId });
+    const channel = await channelModel.findOne({
+      channelId,
+      "members.userId": userId,
+    });
     if (!channel) {
-      return res.status(404).json({ success: false, message: "Channel not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Channel not found" });
     }
 
     channel.members = channel.members.map((member) => {
@@ -951,9 +1010,15 @@ const deleteChat = async (req, res) => {
 
     await channel.save();
 
-    res.status(200).json({ success: true, message: "Chat deleted successfully" });
+    res
+      .status(200)
+      .json({ success: true, message: "Chat deleted successfully" });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Error deleting chat", error: error.message });
+    res.status(500).json({
+      success: false,
+      message: "Error deleting chat",
+      error: error.message,
+    });
   }
 };
 
@@ -961,9 +1026,14 @@ const restoreChat = async (req, res) => {
   const { channelId } = req.params;
   const userId = req.user._id;
   try {
-    const channel = await channelModel.findOne({ channelId, "members.userId": userId });
+    const channel = await channelModel.findOne({
+      channelId,
+      "members.userId": userId,
+    });
     if (!channel) {
-      return res.status(404).json({ success: false, message: "Channel not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Channel not found" });
     }
 
     channel.members = channel.members.map((member) => {
@@ -975,9 +1045,68 @@ const restoreChat = async (req, res) => {
 
     await channel.save();
 
-    res.status(200).json({ success: true, message: "Chat restored successfully" });
+    res
+      .status(200)
+      .json({ success: true, message: "Chat restored successfully" });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Error restoring chat", error: error.message });
+    res.status(500).json({
+      success: false,
+      message: "Error restoring chat",
+      error: error.message,
+    });
+  }
+};
+
+const getChannelByUserId = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const currentUserId = req.user._id.toString();
+
+    if (userId === currentUserId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Cannot get channel with yourself" });
+    }
+    const channel = await channelModel.findOne({
+      type: "private",
+      $and: [
+        {
+          members: {
+            $elemMatch: { userId: new mongoose.Types.ObjectId(currentUserId) },
+          },
+        },
+        {
+          members: {
+            $elemMatch: { userId: new mongoose.Types.ObjectId(userId) },
+          },
+        },
+      ],
+    });
+
+    if (!channel) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Channel not found" });
+    }
+
+    const user = await userModel.findById(userId).select("fullName avatar_url");
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Channel retrieved successfully",
+      data: { ...channel._doc, name: user.fullName, avatar: user.avatar_url },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error retrieving channel",
+      error: error.message,
+    });
   }
 };
 
@@ -1001,5 +1130,6 @@ module.exports = {
   getUserOnlineStatus,
   muteGroupChat,
   deleteChat,
-  restoreChat
+  restoreChat,
+  getChannelByUserId,
 };

@@ -23,5 +23,7 @@ router.put("/:id", isLogin, postController.updatePost);
 router.delete("/:id", isLogin, postController.softDeletePost);
 router.patch("/:id/restore", isLogin, postController.restorePost);
 
+router.patch("/:id/view", postController.increaseViewCount);
+
 
 module.exports = router;

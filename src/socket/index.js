@@ -159,7 +159,6 @@ module.exports = (io) => {
 
   // ===== NOTIFICATIONS NAMESPACE =====
   const notificationsNamespace = io.of("/notifications");
-  const activeGroupCalls = new Map();
   notificationsNamespace.on("connection", (socket) => {
     // Đăng ký userId cho notification socket
     socket.on("register_notifications", ({ userId }) => {
@@ -297,7 +296,7 @@ module.exports = (io) => {
     socket.on("send_call_notification", async (data) => {
       try {
         const {
-          channelId,
+          channelCallId,
           callType,
           callerInfo,
           participants,
@@ -309,30 +308,17 @@ module.exports = (io) => {
         if (chatType === "group" && chatInfo?._id) {
           const chatId = chatInfo._id;
           const callInfoKey = `active-call:info:${chatId}`;
-          const participantsKey = `active-call:participants:${chatId}`;
 
-          // THAY ĐỔI: Sử dụng multi() thay vì pipeline()
-          const multi = redisClient.multi();
-
-          // 1. Lưu thông tin cuộc gọi vào Hash
-          // THAY ĐỔI: Dùng hSet (camelCase) và đảm bảo giá trị là string
-          multi.hSet(callInfoKey, {
-            channelId,
+          redisClient.hSet(callInfoKey, {
+            channelId: chatId,
+            channelCallId,
             callType,
             startTime: Date.now().toString(), // Redis hash values nên là string
           });
 
-          // 2. Thêm người gọi vào Set
-          // THAY ĐỔI: Dùng sAdd (camelCase)
-          multi.sAdd(participantsKey, callerId);
-
           // 3. Đặt thời gian hết hạn cho key
-          const TTL_SECONDS = 12 * 60 * 60; // 12 giờ
-          multi.expire(callInfoKey, TTL_SECONDS);
-          multi.expire(participantsKey, TTL_SECONDS);
-
-          // Thực thi multi command
-          await multi.exec();
+          const TTL_SECONDS = 6 * 60 * 60; // 6 giờ
+          redisClient.expire(callInfoKey, TTL_SECONDS);
         }
 
         // Phần logic gửi thông báo phía dưới không thay đổi
@@ -346,7 +332,7 @@ module.exports = (io) => {
                 notificationsNamespace
                   .to(participantSocketId)
                   .emit("incoming_call", {
-                    channelId,
+                    channelCallId,
                     callType,
                     callerInfo,
                     chatType,
@@ -368,53 +354,15 @@ module.exports = (io) => {
     // Join call - thông báo đã tham gia call
     socket.on("join_call", async (data) => {
       try {
-        const { channelId, userInfo, chatId } = data;
+        const { channelCallId, userInfo } = data;
         const userId = socket.userId;
 
         // Thông báo cho các users khác trong call
         notificationsNamespace.emit("user_joined_call", {
-          channelId,
+          channelCallId,
           userInfo,
           userId,
         });
-
-        if (chatId) {
-          const callInfoKey = `active-call:info:${chatId}`;
-          const participantsKey = `active-call:participants:${chatId}`;
-
-          // Kiểm tra xem cuộc gọi có thực sự tồn tại trong Redis không
-          const callExists = await redisClient.exists(callInfoKey);
-
-          if (callExists) {
-            // Thêm user hiện tại vào Set những người tham gia
-            await redisClient.sAdd(participantsKey, userId);
-
-            // Lấy thông tin call và số lượng người tham gia từ Redis
-            const callInfo = await redisClient.hGetAll(callInfoKey);
-            const participantsCount = await redisClient.sCard(participantsKey);
-
-            // Thông báo cập nhật số lượng người tham gia cho tất cả thành viên trong channel
-            const channel = await Channel.findOne({ _id: chatId });
-            if (channel && channel.members) {
-              for (const member of channel.members) {
-                const memberId = member.userId.toString();
-                const memberSocketIds = notificationUserSocketMap.get(memberId);
-                if (memberSocketIds) {
-                  for (const socketId of memberSocketIds) {
-                    notificationsNamespace
-                      .to(socketId)
-                      .emit("active_group_call", {
-                        channelId,
-                        callType: callInfo.callType, // Lấy từ Redis
-                        chatId,
-                        participantsCount: participantsCount, // Lấy từ Redis
-                      });
-                  }
-                }
-              }
-            }
-          }
-        }
       } catch (err) {
         console.error("Join call error:", err);
       }
@@ -584,58 +532,6 @@ module.exports = (io) => {
         }
       } catch (err) {
         console.error("End call error:", err);
-      }
-    });
-    socket.on("check_active_calls", async (data) => {
-      try {
-        const { chatIds } = data;
-        if (!chatIds || chatIds.length === 0) {
-          return;
-        }
-
-        // THAY ĐỔI: Sử dụng multi() thay vì pipeline()
-        const multi = redisClient.multi();
-        const activeCallsInfo = [];
-
-        chatIds.forEach((chatId) => {
-          const callInfoKey = `active-call:info:${chatId}`;
-          const participantsKey = `active-call:participants:${chatId}`;
-
-          // THAY ĐỔI: Dùng tên hàm camelCase của node-redis
-          multi.hGetAll(callInfoKey);
-          multi.sCard(participantsKey);
-        });
-
-        // Thực thi multi command, kết quả là một mảng thuần túy
-        // Ví dụ: [hGetAllResult1, sCardResult1, hGetAllResult2, sCardResult2, ...]
-        const results = await multi.exec();
-
-        // THAY ĐỔI: Cách xử lý kết quả đơn giản hơn
-        for (let i = 0; i < chatIds.length; i++) {
-          const chatId = chatIds[i];
-          const callInfo = results[i * 2];
-          const participantsCount = results[i * 2 + 1];
-
-          // Kiểm tra xem cuộc gọi có tồn tại không
-          if (
-            callInfo &&
-            Object.keys(callInfo).length > 0 &&
-            participantsCount > 0
-          ) {
-            activeCallsInfo.push({
-              chatId,
-              channelId: callInfo.channelId,
-              callType: callInfo.callType,
-              startTime: callInfo.startTime,
-              participantsCount: participantsCount,
-            });
-          }
-        }
-     
-        socket.emit("active_calls_info", activeCallsInfo);
-        
-      } catch (err) {
-        console.error("Check active calls error:", err);
       }
     });
 
