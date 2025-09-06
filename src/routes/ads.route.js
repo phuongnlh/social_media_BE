@@ -3,13 +3,21 @@ const router = express.Router();
 const adsController = require("../controllers/ads.controller");
 const { isLogin } = require("../middlewares/auth");
 
-//get getPostsAvailableForAds
+// Get posts available for ads
 router.get("/available-posts", isLogin, adsController.getPostsAvailableForAds);
 
+// CRUD operations
 router.post("/", isLogin, adsController.createAds);
 router.get("/", isLogin, adsController.getAllAds);
 router.get("/:id", isLogin, adsController.getAdById);
 router.put("/:id", isLogin, adsController.updateAd);
 router.delete("/:id", isLogin, adsController.deleteAd);
+
+// Status operations
+router.get("/status/:status", isLogin, adsController.getAdsByStatus);
+router.patch("/:id/status", isLogin, adsController.updateAdStatus);
+
+// Increment view count
+router.post("/:id/view", isLogin, adsController.incrementAdView);
 
 module.exports = router;

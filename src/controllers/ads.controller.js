@@ -12,15 +12,14 @@ const createAds = async (req, res) => {
             target_location,
             target_age,
             target_gender,
-            start_date,
-            end_date,
+            target_views
         } = req.body;
 
         if (
-            !post_id || !campaign_name || !target_location || !target_age || !target_gender || !start_date || !end_date) {
+            !post_id || !campaign_name || !target_location || !target_age || !target_gender || !target_views) {
             return res.status(400).json({
                 success: false,
-                message: "All fields are required"
+                message: "All fields are required (post_id, campaign_name, target_location, target_age, target_gender, target_views)"
             });
         }
 
@@ -35,34 +34,10 @@ const createAds = async (req, res) => {
             return res.status(403).json({ success: false, message: "You don't have permission to create ads for this post" });
         }
 
-
-        // Parse date
-        const startDate = new Date(start_date);
-        const endDate = new Date(end_date);
-        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-            return res.status(400).json({ success: false, message: "Invalid date format" });
-        }
-
-        // Normalize về đầu/ngày-UTC để so sánh chuẩn
-        const startUTC = new Date(Date.UTC(
-            startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate(), 0, 0, 0, 0
-        ));
-        const endUTC = new Date(Date.UTC(
-            endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate(), 23, 59, 59, 999
-        ));
-
-        // Hôm nay (UTC) đầu ngày
-        const now = new Date();
-        const todayUTC = new Date(Date.UTC(
-            now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0
-        ));
-
-        // Validate khoảng ngày
-        if (startUTC.getTime() >= endUTC.getTime()) {
-            return res.status(400).json({ success: false, message: "End date must be after start date" });
-        }
-        if (startUTC.getTime() < todayUTC.getTime()) {
-            return res.status(400).json({ success: false, message: "Start date cannot be in the past" });
+        // Validate target_views
+        const targetViewsNum = parseInt(target_views);
+        if (isNaN(targetViewsNum) || targetViewsNum < 1) {
+            return res.status(400).json({ success: false, message: "target_views must be a positive number" });
         }
 
         if (!["male", "female", "other"].includes(String(target_gender))) {
@@ -76,8 +51,7 @@ const createAds = async (req, res) => {
             target_location: String(target_location).trim(),
             target_age: String(target_age).trim(),
             target_gender: String(target_gender),
-            start_date: startUTC,
-            end_date: endUTC,
+            target_views: targetViewsNum,
         });
 
         const savedAds = await newAds.save();
@@ -168,6 +142,14 @@ const getAllAds = async (req, res) => {
                             initialValue: [],
                             in: { $concatArrays: ['$$value', '$$this'] }
                         }
+                    },
+                    // Calculate progress percentage
+                    progress_percentage: {
+                        $cond: [
+                            { $gt: ['$target_views', 0] },
+                            { $multiply: [{ $divide: ['$current_views', '$target_views'] }, 100] },
+                            0
+                        ]
                     }
                 }
             },
@@ -177,8 +159,11 @@ const getAllAds = async (req, res) => {
                     target_location: 1,
                     target_age: 1,
                     target_gender: 1,
-                    start_date: 1,
-                    end_date: 1,
+                    target_views: 1,
+                    current_views: 1,
+                    progress_percentage: 1,
+                    started_at: 1,
+                    completed_at: 1,
                     status: 1,
                     created_at: 1,
                     updated_at: 1,
@@ -191,7 +176,6 @@ const getAllAds = async (req, res) => {
             { $skip: skip },
             { $limit: limitNum }
         ]);
-
 
         // Get total count for pagination
         const totalDocs = await Ads.countDocuments(filter);
@@ -308,6 +292,13 @@ const getAdById = async (req, res) => {
                             initialValue: [],
                             in: { $concatArrays: ['$$value', '$$this'] }
                         }
+                    },
+                    progress_percentage: {
+                        $cond: [
+                            { $gt: ['$target_views', 0] },
+                            { $multiply: [{ $divide: ['$current_views', '$target_views'] }, 100] },
+                            0
+                        ]
                     }
                 }
             },
@@ -317,8 +308,11 @@ const getAdById = async (req, res) => {
                     target_location: 1,
                     target_age: 1,
                     target_gender: 1,
-                    start_date: 1,
-                    end_date: 1,
+                    target_views: 1,
+                    current_views: 1,
+                    progress_percentage: 1,
+                    started_at: 1,
+                    completed_at: 1,
                     status: 1,
                     created_at: 1,
                     updated_at: 1,
@@ -357,7 +351,13 @@ const updateAd = async (req, res) => {
     try {
         const { id } = req.params;
         const user_id = req.user._id;
-        const { campaign_name, target_location, target_age, target_gender } = req.body;
+        const { 
+            campaign_name, 
+            target_location, 
+            target_age, 
+            target_gender, 
+            target_views
+        } = req.body;
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
             return res.status(400).json({
@@ -375,7 +375,7 @@ const updateAd = async (req, res) => {
             });
         }
 
-        // Build updates object with only allowed fields
+        // Build updates object
         const updates = {};
 
         if (campaign_name !== undefined) {
@@ -391,7 +391,6 @@ const updateAd = async (req, res) => {
         }
 
         if (target_gender !== undefined) {
-            // Validate gender if provided
             if (!['male', 'female', 'other'].includes(target_gender)) {
                 return res.status(400).json({
                     success: false,
@@ -399,6 +398,17 @@ const updateAd = async (req, res) => {
                 });
             }
             updates.target_gender = target_gender;
+        }
+
+        if (target_views !== undefined) {
+            const targetViewsNum = parseInt(target_views);
+            if (isNaN(targetViewsNum) || targetViewsNum < 1) {
+                return res.status(400).json({
+                    success: false,
+                    message: "target_views must be a positive number"
+                });
+            }
+            updates.target_views = targetViewsNum;
         }
 
         // Check if any updates provided
@@ -433,7 +443,7 @@ const updateAd = async (req, res) => {
     }
 };
 
-// Delete Ad (only status: waiting_payment)
+// Delete Ad
 const deleteAd = async (req, res) => {
     try {
         const { id } = req.params;
@@ -524,62 +534,16 @@ const getAdsByStatus = async (req, res) => {
                 }
             },
             {
-                $lookup: {
-                    from: 'postmedias',
-                    let: { postId: '$post_id' },
-                    pipeline: [
-                        {
-                            $match: {
-                                $expr: {
-                                    $and: [
-                                        { $eq: ['$post_id', '$$postId'] },
-                                        { $eq: ['$type', 'post'] }
-                                    ]
-                                }
-                            }
-                        },
-                        {
-                            $lookup: {
-                                from: 'media',
-                                localField: 'media_id',
-                                foreignField: '_id',
-                                as: 'media_files',
-                                pipeline: [
-                                    { $project: { url: 1, media_type: 1 } }
-                                ]
-                            }
-                        }
-                    ],
-                    as: 'post_media'
-                }
-            },
-            {
                 $addFields: {
                     user: { $arrayElemAt: ['$user', 0] },
                     post: { $arrayElemAt: ['$post', 0] },
-                    media_files: {
-                        $reduce: {
-                            input: '$post_media.media_files',
-                            initialValue: [],
-                            in: { $concatArrays: ['$$value', '$$this'] }
-                        }
+                    progress_percentage: {
+                        $cond: [
+                            { $gt: ['$target_views', 0] },
+                            { $multiply: [{ $divide: ['$current_views', '$target_views'] }, 100] },
+                            0
+                        ]
                     }
-                }
-            },
-            {
-                $project: {
-                    campaign_name: 1,
-                    target_location: 1,
-                    target_age: 1,
-                    target_gender: 1,
-                    start_date: 1,
-                    end_date: 1,
-                    status: 1,
-                    created_at: 1,
-                    updated_at: 1,
-                    user: 1,
-                    post: 1,
-                    media_files: 1
                 }
             },
             { $sort: { created_at: -1 } },
@@ -648,13 +612,23 @@ const updateAdStatus = async (req, res) => {
             });
         }
 
-        ad.status = status;
-        await ad.save();
+        // Auto set started_at when status becomes active
+        const updates = { status };
+        if (status === 'active' && !ad.started_at) {
+            updates.started_at = new Date();
+        }
+        
+        // Auto set completed_at when status becomes completed
+        if (status === 'completed' && !ad.completed_at) {
+            updates.completed_at = new Date();
+        }
+
+        await Ads.findByIdAndUpdate(id, updates);
 
         return res.status(200).json({
             success: true,
             message: "Ad status updated successfully",
-            data: ad
+            data: { ...ad.toObject(), ...updates }
         });
 
     } catch (error) {
@@ -667,12 +641,12 @@ const updateAdStatus = async (req, res) => {
     }
 };
 
-// Get Posts Available for Ads (no ads or completed ads, with media only)
+// Get Posts Available for Ads
 const getPostsAvailableForAds = async (req, res) => {
     try {
         const user_id = req.user._id;
 
-        // First, get all posts by the user that are not deleted and have media
+        // Get posts with media
         const postsWithMedia = await Post.aggregate([
             {
                 $match: {
@@ -697,7 +671,7 @@ const getPostsAvailableForAds = async (req, res) => {
             },
             {
                 $match: {
-                    'post_media.0': { $exists: true } // Only posts that have media
+                    'post_media.0': { $exists: true }
                 }
             },
             {
@@ -782,7 +756,7 @@ const getPostsAvailableForAds = async (req, res) => {
             status: { $ne: 'completed' }
         }).distinct('post_id');
 
-        // Filter out posts that have active ads (not completed)
+        // Filter out posts that have active ads
         const availablePosts = postsWithMedia.filter(post => 
             !postsWithActiveAds.some(adPostId => 
                 adPostId.toString() === post._id.toString()
@@ -805,6 +779,66 @@ const getPostsAvailableForAds = async (req, res) => {
     }
 };
 
+// Increment ad view count
+const incrementAdView = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid ad ID"
+            });
+        }
+
+        const ad = await Ads.findById(id);
+        if (!ad) {
+            return res.status(404).json({
+                success: false,
+                message: "Ad not found"
+            });
+        }
+
+        // Only increment if ad is active
+        if (ad.status !== 'active') {
+            return res.status(400).json({
+                success: false,
+                message: "Can only increment views for active ads"
+            });
+        }
+
+        // Increment current_views
+        ad.current_views += 1;
+
+        // Check if target is reached
+        if (ad.current_views >= ad.target_views) {
+            ad.status = 'completed';
+            ad.completed_at = new Date();
+        }
+
+        await ad.save();
+
+        return res.status(200).json({
+            success: true,
+            message: "Ad view incremented successfully",
+            data: {
+                current_views: ad.current_views,
+                target_views: ad.target_views,
+                status: ad.status,
+                progress_percentage: (ad.current_views / ad.target_views) * 100
+            }
+        });
+
+    } catch (error) {
+        console.error("Error incrementing ad view:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Server error while incrementing view",
+            error: error.message
+        });
+    }
+};
+
 module.exports = {
     createAds,
     getAllAds,
@@ -813,5 +847,6 @@ module.exports = {
     deleteAd,
     getAdsByStatus,
     updateAdStatus,
-    getPostsAvailableForAds
+    getPostsAvailableForAds,
+    incrementAdView
 };

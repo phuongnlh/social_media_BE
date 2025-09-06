@@ -76,8 +76,7 @@ const createCheckoutSession = async (req, res) => {
             currency: "usd",
             product_data: {
               name: `Ad Campaign: ${ads.campaign_name}`,
-              description: `Advertising campaign targeting ${ads.target_location}, ${ads.target_age}, ${ads.target_gender}`,
-              images: [], // Có thể thêm hình ảnh post vào đây
+              description: `Advertising campaign for ${ads.target_views} views targeting ${ads.target_location}, ${ads.target_age}, ${ads.target_gender}`,
             },
             unit_amount: amount,
           },
@@ -166,10 +165,15 @@ const handleWebhook = async (req, res) => {
   res.json({ received: true });
 };
 
-// Xử lý thanh toán thành công
 const handleSuccessfulPayment = async (session) => {
   try {
     const { adsId, paymentId } = session.metadata;
+
+    const ad = await Ads.findById(adsId);
+    if (!ad) {
+      console.error(`Ad not found: ${adsId}`);
+      return;
+    }
 
     // Update payment status
     await Payment.findByIdAndUpdate(paymentId, {
@@ -178,12 +182,15 @@ const handleSuccessfulPayment = async (session) => {
       completed_at: new Date()
     });
 
-    // Update ad status to pending_review after successful payment
-    await Ads.findByIdAndUpdate(adsId, {
-      status: 'pending_review'
-    });
+    // active ads
+    const updates = {
+      status: 'active',
+      started_at: new Date()
+    };
+
+    await Ads.findByIdAndUpdate(adsId, updates);
     
-    console.log(`Payment successful for ads: ${adsId}`);
+    console.log(`Payment successful for ads: ${adsId}, status set to: active`);
   } catch (error) {
     console.error(`Error updating ad status after payment:`, error);
   }
@@ -201,7 +208,7 @@ const handleExpiredSession = async (session) => {
       });
     }
 
-    // Revert ad status to waiting_payment if session expired
+    // Revert ad status to canceled if session expired
     await Ads.findByIdAndUpdate(adsId, {
       status: 'canceled'
     });
@@ -293,7 +300,7 @@ const verifyPaymentSuccess = async (req, res) => {
   }
 };
 
-// Get payment history for user
+// Get payment history for user (same as before)
 const getPaymentHistory = async (req, res) => {
   try {
     const user_id = req.user._id;
@@ -307,7 +314,7 @@ const getPaymentHistory = async (req, res) => {
     const skip = (pageNum - 1) * limitNum;
 
     const payments = await Payment.find(filter)
-      .populate('ads_id', 'campaign_name target_location target_age target_gender')
+      .populate('ads_id', 'campaign_name target_location target_age target_gender target_views current_views')
       .sort({ created_at: -1 })
       .skip(skip)
       .limit(limitNum);
