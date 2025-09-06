@@ -1,3 +1,4 @@
+const { use } = require("react");
 const Friendship = require("../models/friendship.model");
 const User = require("../models/user.model");
 const notificationService = require("../services/notification.service");
@@ -94,15 +95,13 @@ const respondFriendRequest = async (req, res) => {
   const friendshipId = req.params.friendshipId;
   const { action } = req.body; // accept, decline, block
   const userId = req.user._id;
-
   try {
     // Tìm kiếm lời mời kết bạn và kiểm tra quyền
-    const friendship = await Friendship.findOne({ user_id_1: friendshipId });
+    const friendship = await Friendship.findOne({ user_id_1: friendshipId, user_id_2: userId });
     if (!friendship || friendship.user_id_2.toString() !== userId.toString())
       return res
         .status(404)
         .json({ message: "Không tìm thấy lời mời kết bạn" });
-
     if (action === "accept") {
       // Chấp nhận lời mời kết bạn
       friendship.status = "accepted";

@@ -6,7 +6,8 @@ const {
   sendResetPasswordEmail,
 } = require("../utils/email_utils");
 const redisClient = require("../config/database.redis");
-
+const UserSetting = require("../models/user_settings.model");
+const Friendship = require("../models/friendship.model");
 // Đăng ký tài khoản người dùng mới
 const registerUser = async (req, res) => {
   try {
@@ -20,7 +21,13 @@ const registerUser = async (req, res) => {
     // Tạo mật khẩu băm và muối
     const { hash, salt } = genPwd(password);
     // Tạo người dùng mới
-    const newUser = await new User({ fullName, email, hash, salt, username }).save();
+    const newUser = await new User({
+      fullName,
+      email,
+      hash,
+      salt,
+      username,
+    }).save();
     // Tạo token xác thực email
     const token = signToken({ id: newUser._id }, "15m");
 
@@ -55,6 +62,7 @@ const verifyEmail = async (req, res) => {
     // Cập nhật trạng thái xác thực email
     user.EmailVerified = true;
     await user.save();
+    await createPrivacyDefault(user._id);
     res.json({ message: "Email đã được xác thực thành công" });
   } catch (err) {
     return res.status(500).json({ message: err.message });
@@ -322,6 +330,274 @@ const getUserById = async (req, res) => {
   }
 };
 
+// Controller upload avatar
+const uploadUserAvatar = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res
+        .status(400)
+        .json({ message: "Không có file nào được tải lên" });
+    }
+
+    // Cập nhật thông tin user với avatar URL mới
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { avatar_url: req.file.path || req.file.secure_url },
+      { new: true }
+    );
+
+    return res.status(200).json({
+      message: "Cập nhật avatar thành công",
+      avatar_url: req.file.path || req.file.secure_url,
+    });
+  } catch (error) {
+    console.error("Lỗi tải lên avatar:", error);
+    return res.status(500).json({ message: "Lỗi server" });
+  }
+};
+const uploadBackgroundProfile = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res
+        .status(400)
+        .json({ message: "Không có file nào được tải lên" });
+    }
+
+    // Cập nhật thông tin user với background URL mới
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { cover_photo_url: req.file.path || req.file.secure_url },
+      { new: true }
+    );
+
+    return res.status(200).json({
+      message: "Cập nhật background thành công",
+      cover_photo_url: req.file.path || req.file.secure_url,
+    });
+  } catch (error) {
+    console.error("Lỗi tải lên background:", error);
+    return res.status(500).json({ message: "Lỗi server" });
+  }
+};
+const UpdateDataProfile = async (req, res) => {
+  const userId = req.user._id;
+  const { username, fullName, email, bio, phone } = req.body;
+  if (!/^\d{10,12}$/.test(phone)) {
+    return res.status(400).json({ message: "Số điện thoại không hợp lệ" });
+  }
+  try {
+    await User.findByIdAndUpdate(
+      userId,
+      { username, fullName, email, bio, phone },
+      { new: true }
+    );
+
+    res.status(200).json({
+      message: "Cập nhật thông tin cá nhân thành công",
+    });
+  } catch (error) {
+    console.error("Lỗi cập nhật thông tin cá nhân:", error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+const getUserPrivacy = async (req, res) => {
+  const userId = req.user._id;
+  try {
+    const privacySetting = await UserSetting.find({ user_id: userId });
+    res.status(200).json({
+      message: "Lấy cài đặt quyền riêng tư thành công",
+      data: privacySetting,
+    });
+  } catch (error) {
+    console.error("Lỗi lấy cài đặt quyền riêng tư:", error);
+    res.status(500).json({ message: error });
+  }
+};
+const createPrivacyDefault = async (userId) => {
+  const defaultSettings = [
+    { user_id: userId, key: "profile", privacy_level: "public" },
+    { user_id: userId, key: "profile.email", privacy_level: "public" },
+    { user_id: userId, key: "profile.post", privacy_level: "public" },
+    { user_id: userId, key: "profile.photo", privacy_level: "public" },
+    { user_id: userId, key: "profile.video", privacy_level: "public" },
+    { user_id: userId, key: "profile.friend", privacy_level: "public" },
+    { user_id: userId, key: "profile.group", privacy_level: "public" },
+  ];
+
+  try {
+    await UserSetting.insertMany(defaultSettings);
+  } catch (error) {
+    console.error("Lỗi tạo cài đặt quyền riêng tư mặc định:", error);
+  }
+};
+const updateMultiPrivacySetting = async (req, res) => {
+  const userId = req.user._id;
+  const { settings } = req.body; // [{ key, privacy_level, custom_group }]
+
+  if (!Array.isArray(settings)) {
+    return res.status(400).json({ message: "settings phải là một mảng" });
+  }
+
+  // Chỉ cho phép các key hợp lệ
+  const allowedKeys = [
+    "profile",
+    "profile.email",
+    "profile.post",
+    "profile.photo",
+    "profile.video",
+    "profile.friend",
+    "profile.group",
+  ];
+
+  try {
+    const bulkOps = settings
+      .filter(({ key }) => allowedKeys.includes(key))
+      .map(({ key, privacy_level }) => ({
+        updateOne: {
+          filter: { user_id: userId, key },
+          update: { privacy_level },
+          upsert: true,
+        },
+      }));
+
+    if (bulkOps.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "Không có key hợp lệ để cập nhật" });
+    }
+
+    await UserSetting.bulkWrite(bulkOps);
+
+    res.json({ message: "Cập nhật quyền riêng tư thành công" });
+  } catch (error) {
+    console.error("Lỗi cập nhật quyền riêng tư:", error);
+    res.status(500).json({ message: "Lỗi server" });
+  }
+};
+async function isFriend(userA, userB) {
+  if (!userA || !userB) return false;
+  const friendship = await Friendship.findOne({
+    $or: [
+      { user_id_1: userA, user_id_2: userB },
+      { user_id_1: userB, user_id_2: userA },
+    ],
+    status: "accepted",
+  });
+  return !!friendship;
+}
+const getProfileWithPrivacy = async (req, res) => {
+  const viewerId = req.user?._id;
+  const profileUserId = req.params.userId;
+
+  try {
+    const user = await User.findById(profileUserId).select(
+      "-hash -salt -isDeleted"
+    );
+    if (!user)
+      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+
+    const settingsArr = await UserSetting.find({ user_id: profileUserId });
+    const privacyMap = {};
+    settingsArr.forEach((s) => {
+      privacyMap[s.key] = s.privacy_level;
+    });
+
+    // Hàm kiểm tra quyền truy cập từng trường/tab
+    const canView = async (key) => {
+      const level = privacyMap[key] || "public";
+      if (level === "public") return true;
+      if (level === "private") return false;
+      if (level === "friends") {
+        if (!viewerId) return false;
+        if (viewerId.toString() === profileUserId.toString()) return true;
+        return await isFriend(viewerId, profileUserId);
+      }
+      return false;
+    };
+
+    // Nếu profile là private thì ẩn hết các trường nhạy cảm và tab
+    if (privacyMap["profile"] === "private") {
+      return res.json({
+        profile: {
+          _id: user._id,
+          username: user.username,
+          fullName: user.fullName,
+          avatar_url: user.avatar_url,
+          cover_photo_url: user.cover_photo_url,
+          bio: null,
+          email: null,
+        },
+        canViewPosts: false,
+        canViewPhotos: false,
+        canViewVideos: false,
+        canViewFriends: false,
+        canViewGroups: false,
+        privacy: privacyMap,
+      });
+    }
+    if (privacyMap["profile"] === "friends") {
+      // Nếu profile là friends thì chỉ cho phép xem các trường/tab nếu là bạn bè
+      const bool = await isFriend(viewerId, profileUserId);
+      if (!bool) {
+        return res.json({
+          profile: {
+            _id: user._id,
+            username: user.username,
+            fullName: user.fullName,
+            avatar_url: user.avatar_url,
+            cover_photo_url: user.cover_photo_url,
+            bio: null,
+            email: null,
+          },
+          canViewPosts: false,
+          canViewPhotos: false,
+          canViewVideos: false,
+          canViewFriends: false,
+          canViewGroups: false,
+          privacy: privacyMap,
+        });
+      }
+    }
+
+    // Nếu profile là public hoặc friends thì các trường/tab sẽ xét quyền riêng
+    const [
+      canViewPosts,
+      canViewPhotos,
+      canViewVideos,
+      canViewFriends,
+      canViewGroups,
+    ] = await Promise.all([
+      canView("profile.post"),
+      canView("profile.photo"),
+      canView("profile.video"),
+      canView("profile.friend"),
+      canView("profile.group"),
+    ]);
+
+    const profileData = {
+      _id: user._id,
+      username: user.username,
+      fullName: user.fullName,
+      avatar_url: user.avatar_url,
+      cover_photo_url: user.cover_photo_url,
+      bio: (await canView("profile")) ? user.bio : null,
+      email: (await canView("profile.email")) ? user.email : null,
+    };
+
+    res.json({
+      profile: profileData,
+      canViewPosts,
+      canViewPhotos,
+      canViewVideos,
+      canViewFriends,
+      canViewGroups,
+      privacy: privacyMap,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 module.exports = {
   registerUser,
   verifyEmail,
@@ -332,5 +608,12 @@ module.exports = {
   forgotPassword,
   resetPassword,
   getUser,
-  getUserById
+  uploadUserAvatar,
+  uploadBackgroundProfile,
+  UpdateDataProfile,
+  getUserPrivacy,
+  createPrivacyDefault,
+  updateMultiPrivacySetting,
+  getUserById,
+  getProfileWithPrivacy,
 };
