@@ -133,7 +133,7 @@ const logoutUser = async (req, res) => {
     // Đưa access token vào blacklist để vô hiệu hóa
     const decoded = verifyToken(token);
     const exp = decoded?.exp;
-    const ttl = exp - now; // Thời gian còn lại của token
+    const ttl = exp - Math.floor(Date.now() / 1000); // Thời gian còn lại của token
 
     if (ttl > 0) {
       await redisClient.set(`blacklist:${token}`, "true", { EX: ttl });
