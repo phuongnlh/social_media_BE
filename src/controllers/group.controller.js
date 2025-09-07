@@ -25,7 +25,7 @@ const isGroupAdmin = async (group_id, user_id) => {
 async function getGroupStats(groupId) {
     const [totalMembers, totalPosts, latestPost] = await Promise.all([
         GroupMember.countDocuments({ group: groupId, status: "approved" }),
-        GroupPost.countDocuments({ group_id: groupId, status: "approved" }),
+        GroupPost.countDocuments({ group_id: groupId, status: "approved", is_deleted: false }),
         GroupPost.findOne({
             group_id: groupId,
             status: "approved"
