@@ -14,6 +14,7 @@ const mediaRoutes = require("./media.route");
 const agoraRoutes = require("./agora.route");
 const adsRoutes = require("./ads.route");
 const paymentRoutes = require("./payment.route");
+const storyRoutes = require("./story.route");
 const router = express.Router();
 
 router.get("/", (req, res) => {
@@ -33,5 +34,5 @@ router.use("/media", mediaRoutes);
 router.use("/agora", agoraRoutes);
 router.use("/ads", adsRoutes);
 router.use("/payment", paymentRoutes);
-
+router.use("/stories", storyRoutes);
 module.exports = router;

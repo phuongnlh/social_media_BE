@@ -1,3 +1,4 @@
+const e = require("express");
 const mongoose = require("mongoose");
 const autoIncrement = require("mongoose-sequence")(mongoose);
 const validator = require("validator");
@@ -21,6 +22,8 @@ const userSchema = new mongoose.Schema(
     fullName: { type: String },
     bio: { type: String },
     dateOfBirth: { type: Date },
+    location: { type: String },
+    gender: { type: String, enum: ["male", "female", "other"] },
     avatar_url: {
       type: String,
       default:
