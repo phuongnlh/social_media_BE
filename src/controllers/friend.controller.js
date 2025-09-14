@@ -97,7 +97,10 @@ const respondFriendRequest = async (req, res) => {
   const userId = req.user._id;
   try {
     // Tìm kiếm lời mời kết bạn và kiểm tra quyền
-    const friendship = await Friendship.findOne({ user_id_1: friendshipId, user_id_2: userId });
+    const friendship = await Friendship.findOne({
+      user_id_1: friendshipId,
+      user_id_2: userId,
+    });
     if (!friendship || friendship.user_id_2.toString() !== userId.toString())
       return res
         .status(404)
@@ -128,7 +131,6 @@ const respondFriendRequest = async (req, res) => {
       }
     } else if (action == "decline") {
       // Từ chối lời mời kết bạn
-      // friendship.status = "declined";
       await Friendship.findOneAndDelete({ user_id_1: friendshipId });
       res.status(200).json({
         message: "Đã từ chối lời mời kết bạn",
@@ -295,12 +297,50 @@ const searchFriends = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+// Lấy trạng thái quan hệ bạn bè giữa user hiện tại và profile đang xem
+const getFriendshipStatus = async (req, res) => {
+  try {
+    const userId = req.user._id; 
+    const { profileUserId } = req.params; 
+
+    // Tìm xem có mối quan hệ bạn bè nào giữa 2 người chưa
+    const friendship = await Friendship.findOne({
+      $or: [
+        { user_id_1: userId, user_id_2: profileUserId },
+        { user_id_1: profileUserId, user_id_2: userId },
+      ],
+    });
+
+    if (!friendship) {
+      return res.json({ status: "none" });
+    }
+
+    if (friendship.status === "accepted") {
+      return res.json({ status: "friends" });
+    }
+
+    if (friendship.status === "pending") {
+      if (friendship.user_id_1.toString() === userId.toString()) {
+        return res.json({ status: "pending_sent" }); 
+      } else {
+        return res.json({ status: "pending_received" });
+      }
+    }
+    if (friendship.status === "declined") {
+      return res.json({ status: "none" });
+    }
+    res.json({ status: friendship.status, friendshipId: friendship._id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
 
 module.exports = {
   sendFriendRequest,
   cancelFriendRequest,
   searchFriends,
   respondFriendRequest,
+  getFriendshipStatus,
   getFriendsList,
   withdrawFriendRequest,
   getUnfriendedUsers,
