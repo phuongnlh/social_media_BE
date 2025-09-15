@@ -65,5 +65,6 @@ router.post(
 router.put("/:channelId/mute", isLogin, channelController.muteGroupChat);
 router.put("/:channelId/delete", isLogin, channelController.deleteChat);
 router.put("/:channelId/restore", isLogin, channelController.restoreChat);
+router.get("/get-channel/:userId", isLogin, channelController.getChannelByUserId);
 
 module.exports = router;
