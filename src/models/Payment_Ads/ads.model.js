@@ -7,9 +7,9 @@ const AdsSchema = new mongoose.Schema({
   post_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Post', required: true },
   campaign_name: { type: String, required: true, trim: true },
 
-  target_location: { type: String, required: true },
+  target_location: { type: [String], required: true },
   target_age: { type: String, required: true },
-  target_gender: { type: String, enum: ['male', 'female', 'other'], required: true },
+  target_gender: { type: String, enum: ['male', 'female', 'other', 'all'], required: true },
 
   // View-based fields instead of time-based
   target_views: { type: Number, required: true, min: 1 }, // Số view mục tiêu

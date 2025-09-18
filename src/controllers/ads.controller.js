@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const Ads = require("../models/Payment_Ads/ads.model");
 const Post = require("../models/post.model");
+const Payment = require("../models/Payment_Ads/payment.model");
 
 // Create Ads
 const createAds = async (req, res) => {
@@ -40,15 +41,25 @@ const createAds = async (req, res) => {
             return res.status(400).json({ success: false, message: "target_views must be a positive number" });
         }
 
-        if (!["male", "female", "other"].includes(String(target_gender))) {
+        if (!["male", "female", "other", "all"].includes(String(target_gender))) {
             return res.status(400).json({ success: false, message: "Invalid target gender" });
+        }
+        // Validate target_location is an array
+        if (!Array.isArray(target_location) || target_location.length === 0) {
+            return res.status(400).json({ success: false, message: "Target location must be a non-empty array" });
+        }
+
+        // Validate each location in the array
+        const validatedLocations = target_location.map(location => String(location).trim()).filter(loc => loc.length > 0);
+        if (validatedLocations.length === 0) {
+            return res.status(400).json({ success: false, message: "At least one valid location is required" });
         }
 
         const newAds = new Ads({
             user_id,
             post_id,
             campaign_name: String(campaign_name).trim(),
-            target_location: String(target_location).trim(),
+            target_location: validatedLocations,
             target_age: String(target_age).trim(),
             target_gender: String(target_gender),
             target_views: targetViewsNum,
@@ -210,6 +221,128 @@ const getAllAds = async (req, res) => {
     }
 };
 
+const getAllAdsByUserId = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid user ID"
+            });
+        }
+
+        const ads = await Ads.find({ user_id: userId }).sort({ createdAt: -1 });
+
+        if (!ads || ads.length === 0) {
+            return res.status(200).json({
+                success: true,
+                message: "No ads found for this user",
+                data: []
+            });
+        }
+        
+        const adsWithPayment = await Promise.all(
+            ads.map(async (ad) => {
+                const payment = await Payment.findOne({ ads_id: ad._id })
+                    .select("method amount currency status")
+                    .lean();
+                
+                return {
+                    ...ad.toObject(),
+                    payment: payment || null
+                };
+            })
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "Ads with payment info retrieved successfully",
+            data: adsWithPayment
+        });
+
+    } catch (error) {
+        console.error("Error getting ads by user ID:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Server error while retrieving ads",
+            error: error.message
+        });
+    }
+};
+
+const getAdsAnalytics = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid user ID"
+            });
+        }
+
+        // Aggregate ads data with payment information
+        const analyticsData = await Ads.aggregate([
+            {
+                $match: { user_id: userId }
+            },
+            {
+                $lookup: {
+                    from: 'payments',
+                    localField: '_id',
+                    foreignField: 'ads_id',
+                    as: 'payment'
+                }
+            },
+            {
+                $group: {
+                    _id: null,
+                    totalSpend: {
+                        $sum: {
+                            $cond: [
+                                { $gt: [{ $size: '$payment' }, 0] },
+                                { $arrayElemAt: ['$payment.amount', 0] },
+                                0
+                            ]
+                        }
+                    },
+                    totalReach: { $sum: '$current_views' },
+                    activeAdsCount: {
+                        $sum: {
+                            $cond: [
+                                { $eq: ['$status', 'active'] },
+                                1,
+                                0
+                            ]
+                        }
+                    }
+                }
+            }
+        ]);
+
+        const result = analyticsData.length > 0 ? analyticsData[0] : {
+            totalSpend: 0,
+            totalReach: 0,
+            activeAdsCount: 0
+        };
+        delete result._id;
+        return res.status(200).json({
+            success: true,
+            message: "Ads analytics retrieved successfully",
+            data: result
+        });
+
+    } catch (error) {
+        console.error("Error getting ads analytics:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Server error while retrieving ads analytics",
+            error: error.message
+        });
+    }
+};
+
 // Get Ad by ID
 const getAdById = async (req, res) => {
     try {
@@ -351,11 +484,11 @@ const updateAd = async (req, res) => {
     try {
         const { id } = req.params;
         const user_id = req.user._id;
-        const { 
-            campaign_name, 
-            target_location, 
-            target_age, 
-            target_gender, 
+        const {
+            campaign_name,
+            target_location,
+            target_age,
+            target_gender,
             target_views
         } = req.body;
 
@@ -391,7 +524,7 @@ const updateAd = async (req, res) => {
         }
 
         if (target_gender !== undefined) {
-            if (!['male', 'female', 'other'].includes(target_gender)) {
+            if (!['male', 'female', 'other', 'all'].includes(target_gender)) {
                 return res.status(400).json({
                     success: false,
                     message: "Invalid target gender"
@@ -597,7 +730,7 @@ const updateAdStatus = async (req, res) => {
             });
         }
 
-        if (!['active', 'paused', 'completed', 'pending_review'].includes(status)) {
+        if (!['active', 'paused', 'completed'].includes(status)) {
             return res.status(400).json({
                 success: false,
                 message: "Invalid status"
@@ -612,23 +745,17 @@ const updateAdStatus = async (req, res) => {
             });
         }
 
-        // Auto set started_at when status becomes active
-        const updates = { status };
-        if (status === 'active' && !ad.started_at) {
-            updates.started_at = new Date();
-        }
-        
-        // Auto set completed_at when status becomes completed
-        if (status === 'completed' && !ad.completed_at) {
-            updates.completed_at = new Date();
-        }
-
-        await Ads.findByIdAndUpdate(id, updates);
+        // Update only the status
+        const updatedAd = await Ads.findByIdAndUpdate(
+            id,
+            { status },
+            { new: true }
+        );
 
         return res.status(200).json({
             success: true,
             message: "Ad status updated successfully",
-            data: { ...ad.toObject(), ...updates }
+            data: updatedAd
         });
 
     } catch (error) {
@@ -651,7 +778,8 @@ const getPostsAvailableForAds = async (req, res) => {
             {
                 $match: {
                     user_id: new mongoose.Types.ObjectId(user_id),
-                    is_deleted: false
+                    is_deleted: false,
+                    type: "Public"
                 }
             },
             {
@@ -757,8 +885,8 @@ const getPostsAvailableForAds = async (req, res) => {
         }).distinct('post_id');
 
         // Filter out posts that have active ads
-        const availablePosts = postsWithMedia.filter(post => 
-            !postsWithActiveAds.some(adPostId => 
+        const availablePosts = postsWithMedia.filter(post =>
+            !postsWithActiveAds.some(adPostId =>
                 adPostId.toString() === post._id.toString()
             )
         );
@@ -848,5 +976,7 @@ module.exports = {
     getAdsByStatus,
     updateAdStatus,
     getPostsAvailableForAds,
-    incrementAdView
+    incrementAdView,
+    getAllAdsByUserId,
+    getAdsAnalytics
 };
