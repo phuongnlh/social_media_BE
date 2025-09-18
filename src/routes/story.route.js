@@ -2,7 +2,12 @@ const express = require("express");
 const router = express.Router();
 const { upload } = require("../utils/upload_utils");
 const { isLogin } = require("../middlewares/auth");
-const { getStories, createStory } = require("../controllers/story.controller");
+const {
+  getStories,
+  createStory,
+  getStoryById,
+  deleteStory,
+} = require("../controllers/story.controller");
 
 router.post(
   "/",
@@ -13,6 +18,8 @@ router.post(
   ]),
   createStory
 );
+router.get("/:id", isLogin, getStoryById);
+router.delete("/:id", isLogin, deleteStory);
 router.get("/", isLogin, getStories);
 
 module.exports = router;
