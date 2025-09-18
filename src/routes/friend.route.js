@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const friendController = require("../controllers/friend.controller");
 const followController = require("../controllers/follow.controller");
+const { getFriendshipStatus } = require("../controllers/friend.controller");
 const { isLogin } = require("../middlewares/auth");
 
 router.post("/friend-request", isLogin, friendController.sendFriendRequest);
@@ -31,5 +32,6 @@ router.get("/followers", isLogin, followController.getFollowers);
 router.get("/followings", isLogin, followController.getFollowings);
 
 router.get("/unfriended-users", isLogin, friendController.getUnfriendedUsers);
+router.get("/friendship/status/:profileUserId", isLogin, friendController.getFriendshipStatus);
 
 module.exports = router;
