@@ -29,6 +29,7 @@ app.use(
       "Authorization",
       "X-Requested-With",
       "ngrok-skip-browser-warning",
+      "X-Client-IP",
     ],
     credentials: true, // Allow cookies and authorization headers
   })

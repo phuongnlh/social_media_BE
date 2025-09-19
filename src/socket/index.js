@@ -309,19 +309,17 @@ module.exports = (io) => {
           const chatId = chatInfo._id;
           const callInfoKey = `active-call:info:${chatId}`;
 
-          redisClient.hSet(callInfoKey, {
-            channelId: chatId,
+          await redisClient.hSet(callInfoKey, {
+            chatId,
             channelCallId,
             callType,
-            startTime: Date.now().toString(), // Redis hash values nên là string
+            startTime: Date.now().toString(),
           });
 
-          // 3. Đặt thời gian hết hạn cho key
           const TTL_SECONDS = 6 * 60 * 60; // 6 giờ
           redisClient.expire(callInfoKey, TTL_SECONDS);
         }
 
-        // Phần logic gửi thông báo phía dưới không thay đổi
         for (const participantId of participants) {
           if (participantId.toString() !== callerId) {
             const participantSocketIds = notificationUserSocketMap.get(
@@ -351,13 +349,12 @@ module.exports = (io) => {
       }
     });
 
-    // Join call - thông báo đã tham gia call
+    // Join call
     socket.on("join_call", async (data) => {
       try {
         const { channelCallId, userInfo } = data;
         const userId = socket.userId;
 
-        // Thông báo cho các users khác trong call
         notificationsNamespace.emit("user_joined_call", {
           channelCallId,
           userInfo,
@@ -368,23 +365,20 @@ module.exports = (io) => {
       }
     });
 
-    // Call rejected - thông báo cuộc gọi bị từ chối
+    // Call rejected
     socket.on("call_rejected", async (data) => {
       try {
-        const { channelId, rejectedBy, callerInfo, isGroupCall, chatInfo } =
+        const { channelCallId, rejectedBy, callerInfo, isGroupCall, chatInfo } =
           data;
 
         if (isGroupCall) {
-          // For group calls - just notify that this specific user rejected the call
-          // but don't end the call for everyone
           notificationsNamespace.emit("call_rejected_by_user", {
-            channelId,
+            channelCallId,
             rejectedBy,
             isGroupCall: true,
             chatInfo,
           });
 
-          // Also notify the caller that someone rejected but call continues
           const callerSocketIds = notificationUserSocketMap.get(
             callerInfo.id.toString()
           );
@@ -393,21 +387,20 @@ module.exports = (io) => {
               notificationsNamespace
                 .to(callerSocketId)
                 .emit("call_rejected_by_user", {
-                  channelId,
+                  channelCallId,
                   rejectedBy,
                   isGroupCall: true,
                 });
             }
           }
         } else {
-          // For private calls - notify the caller that call was rejected (ends the call)
           const callerSocketIds = notificationUserSocketMap.get(
             callerInfo.id.toString()
           );
           if (callerSocketIds) {
             for (const callerSocketId of callerSocketIds) {
               notificationsNamespace.to(callerSocketId).emit("call_ended", {
-                channelId,
+                channelCallId,
                 endedBy: rejectedBy,
                 reason: "rejected",
                 isGroupCall: false,
@@ -420,15 +413,14 @@ module.exports = (io) => {
       }
     });
 
-    // Leave call - thông báo đã rời call
+    // Leave call
     socket.on("leave_call", async (data) => {
       try {
-        const { channelId, userInfo, chatId } = data;
+        const { channelCallId, userInfo, chatId } = data;
         const userId = socket.userId;
 
-        // Thông báo cho các users khác trong call
         notificationsNamespace.emit("user_left_call", {
-          channelId,
+          channelCallId,
           userInfo,
           userId,
         });
@@ -437,22 +429,17 @@ module.exports = (io) => {
           const callInfoKey = `active-call:info:${chatId}`;
           const participantsKey = `active-call:participants:${chatId}`;
 
-          // 1. Xóa người dùng khỏi Set những người tham gia
           await redisClient.sRem(participantsKey, userId);
 
-          // 2. Lấy số lượng người tham gia còn lại
           const remainingParticipants = await redisClient.sCard(
             participantsKey
           );
 
-          // 3. Nếu không còn ai trong cuộc gọi, xóa dữ liệu call khỏi Redis
           if (remainingParticipants === 0) {
-            // Xóa cả key info và key participants
             await redisClient.del(callInfoKey, participantsKey);
 
-            // Thông báo kết thúc cuộc gọi cho tất cả thành viên trong channel
             const channel = await Channel.findOne({ _id: chatId });
-            if (channel && channel.members) {
+            if (channel?.members) {
               for (const member of channel.members) {
                 const memberSocketIds = notificationUserSocketMap.get(
                   member.userId.toString()
@@ -461,17 +448,18 @@ module.exports = (io) => {
                   for (const socketId of memberSocketIds) {
                     notificationsNamespace
                       .to(socketId)
-                      .emit("group_call_ended", { chatId });
+                      .emit("group_call_ended", {
+                        channelCallId,
+                        chatId,
+                      });
                   }
                 }
               }
             }
-          }
-          // 4. Nếu vẫn còn người, cập nhật số lượng cho những người khác
-          else {
+          } else {
             const callInfo = await redisClient.hGetAll(callInfoKey);
             const channel = await Channel.findOne({ _id: chatId });
-            if (channel && channel.members) {
+            if (channel?.members) {
               for (const member of channel.members) {
                 const memberSocketIds = notificationUserSocketMap.get(
                   member.userId.toString()
@@ -481,7 +469,7 @@ module.exports = (io) => {
                     notificationsNamespace
                       .to(socketId)
                       .emit("active_group_call", {
-                        channelId: callInfo.channelId,
+                        channelCallId,
                         callType: callInfo.callType,
                         chatId,
                         participantsCount: remainingParticipants,
@@ -497,22 +485,18 @@ module.exports = (io) => {
       }
     });
 
-    // End call - kết thúc call cho tất cả
+    // End call
     socket.on("end_call", async (data) => {
       try {
-        const { channelId, participants, isGroupCall, chatId } = data;
+        const { channelCallId, participants, isGroupCall, chatId } = data;
         const endedByUserId = socket.userId;
 
-        // THAY THẾ: Logic xóa Map bằng Redis
         if (isGroupCall && chatId) {
           const callInfoKey = `active-call:info:${chatId}`;
           const participantsKey = `active-call:participants:${chatId}`;
-
-          // Xóa ngay lập tức cả hai key liên quan đến cuộc gọi này
           await redisClient.del(callInfoKey, participantsKey);
         }
 
-        // Thông báo kết thúc call cho tất cả participants (logic này không đổi)
         for (const participantId of participants) {
           if (participantId.toString() !== endedByUserId) {
             const participantSocketIds = notificationUserSocketMap.get(
@@ -523,7 +507,7 @@ module.exports = (io) => {
                 notificationsNamespace
                   .to(participantSocketId)
                   .emit("call_ended", {
-                    channelId,
+                    channelCallId,
                     endedBy: endedByUserId,
                   });
               }
