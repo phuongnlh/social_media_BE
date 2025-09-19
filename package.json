@@ -13,10 +13,13 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@grpc/grpc-js": "^1.14.0",
+    "@grpc/proto-loader": "^0.8.0",
     "agora-access-token": "^2.0.4",
     "axios": "^1.11.0",
     "body-parser": "^2.2.0",
     "bootstrap": "^5.3.7",
+    "bullmq": "^5.58.5",
     "cloudinary": "^1.41.3",
     "connect-mongo": "^5.1.0",
     "cookie-parser": "^1.4.7",

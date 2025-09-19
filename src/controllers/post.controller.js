@@ -630,33 +630,70 @@ const getAllPostsbyUserId = async (req, res) => {
       .lean();
     
     // Nạp thông tin media cho mỗi bài đăng
-    const populatedPosts = await Promise.all(
-      posts.map(async (post) => {
-        // Lấy 1 document PostMedia cho mỗi post
+    const populatedPosts = await Post.populate(posts, [
+      {
+        path: "user_id",
+        select: "username avatar_url fullName",
+      },
+      {
+        path: "shared_post_id",
+        populate: {
+          path: "user_id",
+          select: "username avatar_url fullName",
+        },
+      },
+    ]);
+
+    // 5. Populate media
+    const postsWithMedia = await Promise.all(
+      populatedPosts.map(async (post) => {
+        // Media cho post chính
         const postMedia = await PostMedia.findOne({
           post_id: post._id,
         }).populate("media_id");
         let media = [];
-        if (postMedia && postMedia.media_id && postMedia.media_id.length > 0) {
+        if (postMedia?.media_id?.length > 0) {
           media = postMedia.media_id.map((m) => ({
             url: m.url,
             type: m.media_type,
           }));
         }
-        const { user_id, ...rest } = post;
+
+        // Nếu có shared_post thì thêm media trực tiếp vào object đó
+        let sharedPost = null;
+        if (post.shared_post_id) {
+          const sharedPostMedia = await PostMedia.findOne({
+            post_id: post.shared_post_id._id,
+          }).populate("media_id");
+
+          let sharedMedia = [];
+          if (sharedPostMedia?.media_id?.length > 0) {
+            sharedMedia = sharedPostMedia.media_id.map((m) => ({
+              url: m.url,
+              type: m.media_type,
+            }));
+          }
+
+          // clone object mongoose sang plain object + gắn media vào trong
+          sharedPost = {
+            ...post.shared_post_id.toObject(),
+            media: sharedMedia,
+          };
+        }
 
         return {
-          ...rest,
-          author: user_id, // Rename user_id => author
-          media,
+          ...post,
+          author: post.user_id,
+          media, // media của post chính
+          shared_post_id: sharedPost, // shared_post có media nằm trong luôn
         };
       })
     );
     
     // Lọc posts có media nếu media_only được truyền vào
-    let filteredPosts = populatedPosts;
+    let filteredPosts = postsWithMedia;
     if (media_only && (media_only === 'true' || media_only === '1')) {
-      filteredPosts = populatedPosts.filter(post => post.media && post.media.length > 0);
+      filteredPosts = postsWithMedia.filter(post => post.media && post.media.length > 0);
     }
     
     res.json(filteredPosts);

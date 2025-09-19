@@ -77,7 +77,7 @@ const loginUser = async (req, res) => {
     const user = await User.findOne({ email: email });
     if (!user) {
       return res
-        .status(401)
+        .status(403)
         .json({ message: "Email hoặc mật khẩu không hợp lệ!" });
     }
 
@@ -91,7 +91,7 @@ const loginUser = async (req, res) => {
     // Kiểm tra mật khẩu
     if (!validatePwd(password, user.hash, user.salt)) {
       return res
-        .status(401)
+        .status(403)
         .json({ message: "Email hoặc mật khẩu không hợp lệ!" });
     }
 
