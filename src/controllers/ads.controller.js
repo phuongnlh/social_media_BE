@@ -41,9 +41,33 @@ const createAds = async (req, res) => {
             return res.status(400).json({ success: false, message: "target_views must be a positive number" });
         }
 
-        if (!["male", "female", "other", "all"].includes(String(target_gender))) {
-            return res.status(400).json({ success: false, message: "Invalid target gender" });
+        // Validate target_age object
+        if (!target_age || typeof target_age !== 'object' || !target_age.min || !target_age.max) {
+            return res.status(400).json({ success: false, message: "target_age must be an object with min and max properties" });
         }
+
+        const minAge = parseInt(target_age.min);
+        const maxAge = parseInt(target_age.max);
+        
+        if (isNaN(minAge) || isNaN(maxAge) || minAge < 0 || maxAge < 0 || minAge > maxAge) {
+            return res.status(400).json({ success: false, message: "Invalid age range. Min age must be less than or equal to max age" });
+        }
+
+        // Validate target_gender array
+        if (!Array.isArray(target_gender) || target_gender.length === 0) {
+            return res.status(400).json({ success: false, message: "Target gender must be a non-empty array" });
+        }
+
+        const validGenders = ['male', 'female', 'other'];
+        const validatedGenders = target_gender.filter(gender => validGenders.includes(gender));
+        
+        if (validatedGenders.length === 0) {
+            return res.status(400).json({ success: false, message: "At least one valid gender is required (male, female, other)" });
+        }
+
+        // Remove duplicates
+        const uniqueGenders = [...new Set(validatedGenders)];
+
         // Validate target_location is an array
         if (!Array.isArray(target_location) || target_location.length === 0) {
             return res.status(400).json({ success: false, message: "Target location must be a non-empty array" });
@@ -60,8 +84,11 @@ const createAds = async (req, res) => {
             post_id,
             campaign_name: String(campaign_name).trim(),
             target_location: validatedLocations,
-            target_age: String(target_age).trim(),
-            target_gender: String(target_gender),
+            target_age: {
+                min: minAge,
+                max: maxAge
+            },
+            target_gender: uniqueGenders,
             target_views: targetViewsNum,
         });
 
@@ -245,7 +272,7 @@ const getAllAdsByUserId = async (req, res) => {
         const adsWithPayment = await Promise.all(
             ads.map(async (ad) => {
                 const payment = await Payment.findOne({ ads_id: ad._id })
-                    .select("method amount currency status")
+                    .select("method amount currency status paylink")
                     .lean();
                 
                 return {
@@ -516,21 +543,47 @@ const updateAd = async (req, res) => {
         }
 
         if (target_location !== undefined) {
-            updates.target_location = String(target_location).trim();
+            if (!Array.isArray(target_location) || target_location.length === 0) {
+                return res.status(400).json({ success: false, message: "Target location must be a non-empty array" });
+            }
+            const validatedLocations = target_location.map(location => String(location).trim()).filter(loc => loc.length > 0);
+            if (validatedLocations.length === 0) {
+                return res.status(400).json({ success: false, message: "At least one valid location is required" });
+            }
+            updates.target_location = validatedLocations;
         }
 
         if (target_age !== undefined) {
-            updates.target_age = String(target_age).trim();
+            if (!target_age || typeof target_age !== 'object' || !target_age.min || !target_age.max) {
+                return res.status(400).json({ success: false, message: "target_age must be an object with min and max properties" });
+            }
+
+            const minAge = parseInt(target_age.min);
+            const maxAge = parseInt(target_age.max);
+            
+            if (isNaN(minAge) || isNaN(maxAge) || minAge < 0 || maxAge < 0 || minAge > maxAge) {
+                return res.status(400).json({ success: false, message: "Invalid age range. Min age must be less than or equal to max age" });
+            }
+
+            updates.target_age = {
+                min: minAge,
+                max: maxAge
+            };
         }
 
         if (target_gender !== undefined) {
-            if (!['male', 'female', 'other', 'all'].includes(target_gender)) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid target gender"
-                });
+            if (!Array.isArray(target_gender) || target_gender.length === 0) {
+                return res.status(400).json({ success: false, message: "Target gender must be a non-empty array" });
             }
-            updates.target_gender = target_gender;
+
+            const validGenders = ['male', 'female', 'other'];
+            const validatedGenders = target_gender.filter(gender => validGenders.includes(gender));
+            
+            if (validatedGenders.length === 0) {
+                return res.status(400).json({ success: false, message: "At least one valid gender is required (male, female, other)" });
+            }
+
+            updates.target_gender = [...new Set(validatedGenders)];
         }
 
         if (target_views !== undefined) {

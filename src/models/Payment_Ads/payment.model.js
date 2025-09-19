@@ -11,6 +11,8 @@ const PaymentSchema = new Schema({
   currency: { type: String, default: 'VND' },
   status:   { type: String, enum: ['pending', 'paid', 'failed', 'canceled'], default: 'pending', index: true },
 
+  paylink: { type: String },
+
   // Stripe
   stripe_payment_intent_id:   { type: String, index: true, unique: true, sparse: true }, // pi_*
   stripe_checkout_session_id: { type: String, index: true, unique: true, sparse: true }, // cs_*
