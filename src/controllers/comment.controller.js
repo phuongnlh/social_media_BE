@@ -12,6 +12,7 @@ const {
   getNotificationUserSocketMap,
 } = require("../socket/io-instance");
 const moderationQueue = require("../queues/moderationQueue");
+const moderationService = require("../queues/moderationQueue");
 
 //* Comment:
 // Đếm số lượng bình luận của một bài viết
@@ -117,11 +118,11 @@ const createComment = async (req, res) => {
 
     if (media) {
       console.log("Check image/video for moderation:", media.url);
-      await moderationQueue.add("checkImage", {
-        commentId: comment._id.toString(),
-        url: media.url,
-        mediaType: media.media_type,
-      });
+      await moderationService.checkCommentImage(
+        comment._id,
+        media.url,
+        media.media_type
+      );
     }
 
     grpcClient.CheckComment(

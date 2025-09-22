@@ -41,5 +41,3 @@ module.exports.attachLocation = async (req, res, next) => {
     next();
   }
 };
-
-

@@ -8,6 +8,8 @@ const {
 const redisClient = require("../config/database.redis");
 const UserSetting = require("../models/user_settings.model");
 const Friendship = require("../models/friendship.model");
+const speakeasy = require("speakeasy");
+const qrcode = require("qrcode");
 // Đăng ký tài khoản người dùng mới
 const registerUser = async (req, res) => {
   try {
@@ -93,6 +95,11 @@ const loginUser = async (req, res) => {
       return res
         .status(403)
         .json({ message: "Email hoặc mật khẩu không hợp lệ!" });
+    }
+
+    if (user.twoFAEnabled) {
+      // Yêu cầu nhập mã OTP
+      return res.json({ require2FA: true, userId: user._id });
     }
 
     // Tạo access token và refresh token
@@ -598,6 +605,152 @@ const getProfileWithPrivacy = async (req, res) => {
   }
 };
 
+const generateTwoFASecret = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const user = await User.findById(userId);
+    if (!user)
+      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    const secret = speakeasy.generateSecret({
+      name: "MySocialApp",
+      length: 20,
+    });
+    await User.findByIdAndUpdate(userId, {
+      twoFASecret: secret.base32,
+    });
+    const qr = await qrcode.toDataURL(secret.otpauth_url);
+    return res.status(200).json({ qr });
+  } catch (error) {
+    console.error("Lỗi kích hoạt 2FA:", error);
+    return res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+const enableTwoFA = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { token } = req.body;
+    const user = await User.findById(userId);
+    if (!user)
+      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (user.twoFAEnabled)
+      return res.status(400).json({ message: "Đã kích hoạt 2FA" });
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFASecret,
+      encoding: "base32",
+      token,
+      window: 1,
+    });
+    if (verified) {
+      await User.findByIdAndUpdate(userId, { twoFAEnabled: true });
+      return res.status(200).json({ message: "Xây dựng 2FA thành công" });
+    } else {
+      return res.status(400).json({ message: "Token không hợp lệ" });
+    }
+  } catch (error) {
+    console.error("Lỗi kích hoạt 2FA:", error);
+    return res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+const verifyTwoFA = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { token } = req.body;
+    const user = await User.findById(userId);
+    if (!user)
+      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user.twoFAEnabled)
+      return res.status(400).json({ message: "Chua kích hoạt 2FA" });
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFASecret,
+      encoding: "base32",
+      token,
+      window: 1,
+    });
+    if (verified) {
+      await User.findByIdAndUpdate(userId, { twoFAEnabled: true });
+      return res.status(200).json({ message: "Kích hoạt 2FA thành công" });
+    } else {
+      return res.status(400).json({ message: "Mã xác thực 2FA không hợp lệ" });
+    }
+  } catch (error) {
+    console.error("Lỗi kích hoạt 2FA:", error);
+    return res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+const verifyTwoFALogin = async (req, res) => {
+  try {
+    const { userId, token } = req.body;
+    const user = await User.findById(userId);
+    if (!user)
+      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user.twoFAEnabled)
+      return res.status(400).json({ message: "Chua kích hoạt 2FA" });
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFASecret,
+      encoding: "base32",
+      token,
+      window: 1,
+    });
+    if (verified) {
+      // Tạo access token và refresh token
+      const accessToken = signToken({ id: user._id }, "15m");
+      const refreshToken = signToken({ id: user._id }, "7d");
+
+      // Lưu refresh token vào Redis theo userId (để quản lý đa phiên)
+      await redisClient.set(`refresh:${user._id}:${refreshToken}`, "valid", {
+        EX: 60 * 60 * 24 * 7, // Hết hạn sau 7 ngày
+      });
+      // Thêm refresh token vào danh sách phiên của người dùng
+      const userRefreshTokensSet = `user-sessions:${user._id}`;
+      await redisClient.sAdd(userRefreshTokensSet, refreshToken);
+      // Lưu refresh token vào cookie
+      res.cookie("refreshToken", refreshToken, {
+        httpOnly: true,
+        secure: false,
+        sameSite: "Lax",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
+      // Trả về access token cho client
+      res.status(200).json({ accessToken });
+    } else {
+      return res.status(400).json({ message: "Mã xác thực 2FA không hợp lệ" });
+    }
+  } catch (error) {
+    console.error("Lỗi kích hoạt 2FA:", error);
+    return res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+const disableTwoFA = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { token } = req.body;
+    const user = await User.findById(userId);
+    if (!user)
+      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user.twoFAEnabled)
+      return res.status(400).json({ message: "Chua kích hoạt 2FA" });
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFASecret,
+      encoding: "base32",
+      token,
+      window: 1,
+    });
+    if (verified) {
+      await User.findByIdAndUpdate(userId, { twoFAEnabled: false });
+      return res.status(200).json({ message: "Tắt 2FA thành công" });
+    } else {
+      return res.status(400).json({ message: "Mã xác thức 2FA không hợp lệ" });
+    }
+  } catch (error) {
+    console.error("Lỗi tắt 2FA:", error);
+    return res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
 module.exports = {
   registerUser,
   verifyEmail,
@@ -616,4 +769,9 @@ module.exports = {
   updateMultiPrivacySetting,
   getUserById,
   getProfileWithPrivacy,
+  generateTwoFASecret,
+  enableTwoFA,
+  verifyTwoFA,
+  disableTwoFA,
+  verifyTwoFALogin,
 };
