@@ -6,6 +6,9 @@ const { isLogin } = require("../middlewares/auth");
 // Get posts available for ads
 router.get("/available-posts", isLogin, adsController.getPostsAvailableForAds);
 
+router.get("/me", isLogin, adsController.getAllAdsByUserId);
+router.get("/analytics", isLogin, adsController.getAdsAnalytics);
+
 // CRUD operations
 router.post("/", isLogin, adsController.createAds);
 router.get("/", isLogin, adsController.getAllAds);

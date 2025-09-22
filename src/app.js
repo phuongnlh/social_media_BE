@@ -29,11 +29,12 @@ app.use(
       "Authorization",
       "X-Requested-With",
       "ngrok-skip-browser-warning",
+      "X-Client-IP",
     ],
     credentials: true, // Allow cookies and authorization headers
   })
 );
-app.use('/api/v1/payment/webhook', express.raw({type: 'application/json'}));
+app.use('/api/v1/payment/stripe/webhook', express.raw({type: 'application/json'}));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

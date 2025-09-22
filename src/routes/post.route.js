@@ -4,6 +4,7 @@ const {upload} = require("../utils/upload_utils");
 const passport = require("passport");
 const postController = require("../controllers/post.controller");
 const { isLogin } = require("../middlewares/auth");
+const { attachLocation } = require("../middlewares/location");
 
 //* Post reactions
 router.post("/reaction", isLogin, postController.reactToPost);
@@ -17,7 +18,7 @@ router.post("/share", isLogin, postController.sharePost);
 router.post("/", isLogin, upload.array("media", 10), postController.createPost);
 router.get("/", isLogin, postController.getAllPostsbyUser);
 router.get("/user/:userId", isLogin, postController.getAllPostsbyUserId);
-router.get("/recommend", isLogin, postController.getRecommendPost);
+router.get("/recommend", isLogin, attachLocation, postController.getRecommendPost);
 router.get("/:id", isLogin, postController.getPostById);
 router.put("/:id", isLogin, postController.updatePost);
 router.delete("/:id", isLogin, postController.softDeletePost);
