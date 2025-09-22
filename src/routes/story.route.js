@@ -2,13 +2,14 @@ const express = require("express");
 const router = express.Router();
 const { upload } = require("../utils/upload_utils");
 const { isLogin } = require("../middlewares/auth");
-const {
-  getStories,
-  createStory,
-  getStoryById,
-  deleteStory,
-} = require("../controllers/story.controller");
+const Story = require("../controllers/story.controller");
 
+router.post("/:id/reactions", isLogin, Story.reactStory);
+router.post("/:id/views", isLogin, Story.viewStory);
+router.get("/:id/views", isLogin, Story.getViews);
+router.get("/:id", isLogin, Story.getStoryById);
+router.delete("/:id", isLogin, Story.deleteStory);
+router.get("/", isLogin, Story.getStories);
 router.post(
   "/",
   isLogin,
@@ -16,10 +17,7 @@ router.post(
     { name: "image", maxCount: 1 },
     { name: "video", maxCount: 1 },
   ]),
-  createStory
+  Story.createStory
 );
-router.get("/:id", isLogin, getStoryById);
-router.delete("/:id", isLogin, deleteStory);
-router.get("/", isLogin, getStories);
 
 module.exports = router;

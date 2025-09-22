@@ -9,6 +9,7 @@ const Comment = require("../models/Comment_Reaction/comment.model");
 const mongoose = require("mongoose");
 const notificationService = require("../services/notification.service");
 const { getSocketIO, getUserSocketMap } = require("../socket/io-instance");
+const moderationService = require("../queues/moderationQueue");
 
 // Tạo bài đăng mới với tệp media (nếu có)
 const createPost = async (req, res) => {
@@ -40,7 +41,51 @@ const createPost = async (req, res) => {
       });
     }
 
-    res.status(201).json({ message: "Post created", postId: post._id });
+    const getMedia = await PostMedia.findOne({ post_id: post._id }).populate(
+      "media_id"
+    );
+    if (getMedia && getMedia.media_id.length > 0) {
+      if (getMedia.media_id.length === 1) {
+        // Single image - use existing job
+        await moderationService.checkSinglePostImage(
+          post._id,
+          getMedia.media_id[0].url,
+          getMedia.media_id[0].media_type
+        );
+        console.log(`Single image moderation queued for post ${newPost._id}`);
+      } else {
+        // Multiple images - use new job
+        await moderationService.checkPostWithMultipleImages(
+          post._id,
+          getMedia.media_id.map((m) => ({
+            url: m.url,
+            mediaType: m.media_type,
+          }))
+        );
+        console.log(`Multiple images moderation queued for post ${post._id}`);
+      }
+    }
+    post = async (post) => {
+      // Media cho post chính
+      const postMedia = await PostMedia.findOne({
+        post_id: post._id,
+      }).populate("media_id");
+      let media = [];
+      if (postMedia?.media_id?.length > 0) {
+        media = postMedia.media_id.map((m) => ({
+          url: m.url,
+          type: m.media_type,
+        }));
+      }
+
+      return {
+        ...post,
+        author: post.user_id,
+        media,
+      };
+    };
+
+    res.status(201).json({ message: "Post created", post });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -89,7 +134,7 @@ const getPostById = async (req, res) => {
   try {
     const postId = req.params.id;
     const userId = req.user._id;
-    
+
     // Tìm bài đăng theo ID và populate thông tin user
     const post = await Post.findById(postId)
       .populate("user_id", "username avatar_url fullName")
@@ -125,7 +170,7 @@ const getPostById = async (req, res) => {
 
     // Destructure để rename user_id thành author
     const { user_id, ...rest } = post;
-    
+
     res.json({
       ...rest,
       author: user_id, // Rename user_id => author và bao gồm username, fullName, avatar_url
@@ -172,7 +217,7 @@ const softDeletePost = async (req, res) => {
     const post = await Post.findOne({
       _id: postId,
       user_id: userId,
-      isDeleted: false,
+      is_deleted: false,
     });
     if (!post)
       return res
@@ -180,11 +225,11 @@ const softDeletePost = async (req, res) => {
         .json({ message: "Không tìm thấy bài đăng hoặc đã bị xóa" });
 
     // Đánh dấu bài đăng đã bị xóa và lưu thời gian xóa
-    post.isDeleted = true;
+    post.is_deleted = true;
     post.deleted_at = new Date();
     await post.save();
 
-    res.json({
+    res.status(200).json({
       message:
         "Bài đăng đã được chuyển vào thùng rác. Sẽ bị xóa vĩnh viễn sau 7 ngày.",
     });
@@ -537,7 +582,6 @@ const getRecommendPost = async (req, res) => {
       })
     );
 
-
     // 6. Lấy tương tác user để ưu tiên
     const reactions = await PostReaction.find({ user_id: userId }).lean();
     const reactedPostIds = reactions.map((r) => r.post_id?.toString());
@@ -617,48 +661,86 @@ const getRecommendPost = async (req, res) => {
   }
 };
 
-
 const getAllPostsbyUserId = async (req, res) => {
   try {
     const userId = req.params.userId;
     const { media_only } = req.query; // Tham số query để lọc posts có media
-    
+
     // Tìm tất cả bài đăng không bị xóa của người dùng, sắp xếp theo thời gian giảm dần
     const posts = await Post.find({ user_id: userId, is_deleted: false })
       .sort({ createdAt: -1 })
       .populate("user_id", "username avatar_url fullName") // Nạp thông tin người dùng
       .lean();
-    
+
     // Nạp thông tin media cho mỗi bài đăng
-    const populatedPosts = await Promise.all(
-      posts.map(async (post) => {
-        // Lấy 1 document PostMedia cho mỗi post
+    const populatedPosts = await Post.populate(posts, [
+      {
+        path: "user_id",
+        select: "username avatar_url fullName",
+      },
+      {
+        path: "shared_post_id",
+        populate: {
+          path: "user_id",
+          select: "username avatar_url fullName",
+        },
+      },
+    ]);
+
+    // 5. Populate media
+    const postsWithMedia = await Promise.all(
+      populatedPosts.map(async (post) => {
+        // Media cho post chính
         const postMedia = await PostMedia.findOne({
           post_id: post._id,
         }).populate("media_id");
         let media = [];
-        if (postMedia && postMedia.media_id && postMedia.media_id.length > 0) {
+        if (postMedia?.media_id?.length > 0) {
           media = postMedia.media_id.map((m) => ({
             url: m.url,
             type: m.media_type,
           }));
         }
-        const { user_id, ...rest } = post;
+
+        // Nếu có shared_post thì thêm media trực tiếp vào object đó
+        let sharedPost = null;
+        if (post.shared_post_id) {
+          const sharedPostMedia = await PostMedia.findOne({
+            post_id: post.shared_post_id._id,
+          }).populate("media_id");
+
+          let sharedMedia = [];
+          if (sharedPostMedia?.media_id?.length > 0) {
+            sharedMedia = sharedPostMedia.media_id.map((m) => ({
+              url: m.url,
+              type: m.media_type,
+            }));
+          }
+
+          // clone object mongoose sang plain object + gắn media vào trong
+          sharedPost = {
+            ...post.shared_post_id.toObject(),
+            media: sharedMedia,
+          };
+        }
 
         return {
-          ...rest,
-          author: user_id, // Rename user_id => author
-          media,
+          ...post,
+          author: post.user_id,
+          media, // media của post chính
+          shared_post_id: sharedPost, // shared_post có media nằm trong luôn
         };
       })
     );
-    
+
     // Lọc posts có media nếu media_only được truyền vào
-    let filteredPosts = populatedPosts;
-    if (media_only && (media_only === 'true' || media_only === '1')) {
-      filteredPosts = populatedPosts.filter(post => post.media && post.media.length > 0);
+    let filteredPosts = postsWithMedia;
+    if (media_only && (media_only === "true" || media_only === "1")) {
+      filteredPosts = postsWithMedia.filter(
+        (post) => post.media && post.media.length > 0
+      );
     }
-    
+
     res.json(filteredPosts);
   } catch (err) {
     res.status(500).json({ error: err.message });

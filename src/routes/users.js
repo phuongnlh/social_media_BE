@@ -22,6 +22,13 @@ router.put("/profile", isLogin, UserController.UpdateDataProfile);
 router.get("/privacy", isLogin, UserController.getUserPrivacy);
 router.put("/privacy-multi", isLogin, UserController.updateMultiPrivacySetting);
 
+//2FA
+router.post("/2fa/generate", isLogin, UserController.generateTwoFASecret);
+router.post("/2fa/enable", isLogin, UserController.enableTwoFA);
+router.post("/2fa/disable", isLogin, UserController.disableTwoFA);
+router.post("/2fa/verify", isLogin, UserController.verifyTwoFA);
+router.post("/2fa/verify-login", UserController.verifyTwoFALogin);
+
 router.get("/", isLogin, (req, res) => {
   res.json(req.user);
 });

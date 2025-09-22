@@ -36,6 +36,8 @@ const userSchema = new mongoose.Schema(
     PhoneVerified: { type: Boolean, default: false },
     isBlocked: { type: Boolean, default: false },
     isDeleted: { type: Boolean, default: false },
+    twoFASecret: String,
+    twoFAEnabled: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
