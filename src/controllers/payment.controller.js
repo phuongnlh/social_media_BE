@@ -157,7 +157,7 @@ const createMoMoSession = async (req, res, ads, payment, amount) => {
     console.log('=== CREATED MOMO ORDER ID ===', orderId);
     const requestId = orderId;
     const orderInfo = `Ad Campaign: ${ads.campaign_name}`;
-    const redirectUrl = `${process.env.FRONTEND_URL}/ads/payment/success?order_id=${orderId}&method=momo`;
+    const redirectUrl = `${process.env.FRONTEND_URL}/ads/payment/result?order_id=${orderId}&method=momo`;
     const ipnUrl = `${process.env.BACKEND_URL}/api/v1/payment/momo/webhook`;
     const extraData = Buffer.from(JSON.stringify({
       adsId: String(ads._id),
@@ -487,7 +487,6 @@ const verifyMoMoPayment = async (req, res, order_id, user_id) => {
 // Handle payment cancel function
 const handlePaymentCancel = async (req, res) => {
   try {
-
     const { ads_id, method } = req.body;
     const user_id = req.user._id;
 
@@ -510,6 +509,14 @@ const handlePaymentCancel = async (req, res) => {
       return res.status(403).json({
         success: false,
         message: "Unauthorized"
+      });
+    }
+
+    // Check if ads is already canceled
+    if (ads.status === 'canceled') {
+      return res.status(200).json({
+        success: true,
+        message: "Ad is already canceled"
       });
     }
 
@@ -647,7 +654,7 @@ const handleFailedPayment = async (paymentIntent) => {
   }
 };
 
-// Get payment history for user (unchanged)
+// Get payment history for user
 const getPaymentHistory = async (req, res) => {
   try {
     const user_id = req.user._id;

@@ -5,6 +5,7 @@ const Post = require("../models/post.model");
 const GroupPost = require("../models/Group/group_post.model");
 const User = require("../models/user.model");
 const notificationService = require("../services/notification.service");
+const adsModel = require("../models/Payment_Ads/ads.model");
 const {
   getSocketIO,
   getUserSocketMap,
@@ -94,6 +95,19 @@ const createComment = async (req, res) => {
       reply_to_comment_id = parent_comment_id;
     }
 
+    // Tăng count interaction của ads (nếu có)
+    if (post_id) {
+      await adsModel.updateOne(
+        { post_id: post_id, status: "active" },
+        [
+          {
+            $set: {
+              total_interactions: { $add: ["$total_interactions", 1] }
+            }
+          }
+        ]
+      );
+    }
     const comment = await Comment.create({
       user_id, post_id, postgr_id, content,
       parent_comment_id,

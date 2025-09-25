@@ -26,6 +26,7 @@ const AdsSchema = new mongoose.Schema({
   // View-based fields instead of time-based
   target_views: { type: Number, required: true, min: 1 }, // Số view mục tiêu
   current_views: { type: Number, default: 0, min: 0 }, // Số view hiện tại
+  total_interactions: { type: Number, default: 0, min: 0 }, // Tổng số tương tác (like, comment, share)
   started_at: { type: Date }, // Khi nào ads bắt đầu chạy
   completed_at: { type: Date }, // Khi nào ads hoàn thành
 

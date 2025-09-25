@@ -40,6 +40,7 @@ const getStories = async (req, res) => {
     const friendIds = friendships.map((f) =>
       f.user_id_1.toString() === userId.toString() ? f.user_id_2 : f.user_id_1
     );
+    friendIds.push(userId);
     // query story tạo trong vòng 24h
     const stories = await storyModel
       .find({ createdAt: { $gte: cutoff }, userId: { $in: friendIds } })

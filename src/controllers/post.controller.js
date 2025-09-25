@@ -89,7 +89,7 @@ const getPostById = async (req, res) => {
   try {
     const postId = req.params.id;
     const userId = req.user._id;
-    
+
     // Tìm bài đăng theo ID và populate thông tin user
     const post = await Post.findById(postId)
       .populate("user_id", "username avatar_url fullName")
@@ -125,7 +125,7 @@ const getPostById = async (req, res) => {
 
     // Destructure để rename user_id thành author
     const { user_id, ...rest } = post;
-    
+
     res.json({
       ...rest,
       author: user_id, // Rename user_id => author và bao gồm username, fullName, avatar_url
@@ -299,6 +299,10 @@ const reactToPost = async (req, res) => {
 
     if (!type) type = "like"; // Mặc định là "like" nếu không có type
 
+    // Kiểm tra xem user đã react post này chưa
+    const existingReaction = await PostReaction.findOne({ user_id, post_id });
+    const isNewReaction = !existingReaction;
+
     const reaction = await PostReaction.findOneAndUpdate(
       { user_id, post_id },
       { type },
@@ -309,6 +313,21 @@ const reactToPost = async (req, res) => {
         runValidators: true,
       }
     );
+
+    // Chỉ tăng total_interactions nếu là reaction mới (chưa từng react)
+    if (isNewReaction) {
+      await adsModel.updateOne(
+        { post_id: post_id, status: "active" },
+        [
+          {
+            $set: {
+              total_interactions: { $add: ["$total_interactions", 1] }
+            }
+          }
+        ]
+      );
+    }
+
     // Gửi thông báo cho chủ post
     try {
       const post = await Post.findById(post_id);
@@ -329,13 +348,11 @@ const reactToPost = async (req, res) => {
           const otherCount = otherReactUsers.length - 1;
           let contentNoti = "";
           if (otherCount > 0) {
-            contentNoti = `${
-              currentUser.user_id.fullName || currentUser.user_id.username
-            } và ${otherCount} người khác đã bày tỏ cảm xúc bài viết của bạn.`;
+            contentNoti = `${currentUser.user_id.fullName || currentUser.user_id.username
+              } và ${otherCount} người khác đã bày tỏ cảm xúc bài viết của bạn.`;
           } else {
-            contentNoti = `${
-              currentUser.user_id.fullName || currentUser.user_id.username
-            } đã bày tỏ cảm xúc bài viết của bạn.`;
+            contentNoti = `${currentUser.user_id.fullName || currentUser.user_id.username
+              } đã bày tỏ cảm xúc bài viết của bạn.`;
           }
           const io = getSocketIO();
           const userSocketMap = getUserSocketMap();
@@ -362,11 +379,25 @@ const removeReaction = async (req, res) => {
   try {
     const { post_id } = req.body;
     const user_id = req.user._id;
-    const posts = await Post.find({ is_deleted: false })
-      .sort({ created_at: -1 })
-      .lean();
-
-    await PostReaction.findOneAndDelete({ user_id, post_id });
+    
+    // Xóa reaction
+    const deletedReaction = await PostReaction.findOneAndDelete({ user_id, post_id });
+    
+    // Chỉ giảm counter nếu thực sự có reaction bị xóa
+    if (deletedReaction) {
+      await adsModel.updateOne(
+        { post_id: post_id, status: "active" },
+        [
+          {
+            $set: {
+              total_interactions: { 
+                $max: [{ $subtract: ["$total_interactions", 1] }, 0] 
+              }
+            }
+          }
+        ]
+      );
+    }
 
     res.status(200).json({ message: "Reaction removed" });
   } catch (err) {
@@ -622,13 +653,13 @@ const getAllPostsbyUserId = async (req, res) => {
   try {
     const userId = req.params.userId;
     const { media_only } = req.query; // Tham số query để lọc posts có media
-    
+
     // Tìm tất cả bài đăng không bị xóa của người dùng, sắp xếp theo thời gian giảm dần
     const posts = await Post.find({ user_id: userId, is_deleted: false })
       .sort({ createdAt: -1 })
       .populate("user_id", "username avatar_url fullName") // Nạp thông tin người dùng
       .lean();
-    
+
     // Nạp thông tin media cho mỗi bài đăng
     const populatedPosts = await Promise.all(
       posts.map(async (post) => {
@@ -652,13 +683,13 @@ const getAllPostsbyUserId = async (req, res) => {
         };
       })
     );
-    
+
     // Lọc posts có media nếu media_only được truyền vào
     let filteredPosts = populatedPosts;
     if (media_only && (media_only === 'true' || media_only === '1')) {
       filteredPosts = populatedPosts.filter(post => post.media && post.media.length > 0);
     }
-    
+
     res.json(filteredPosts);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -708,6 +739,23 @@ const increaseViewCount = async (req, res) => {
   try {
     const postId = req.params.id;
     await Post.findByIdAndUpdate(postId, { $inc: { viewCount: 1 } });
+    await adsModel.updateOne(
+      { post_id: postId, status: "active" },
+      [
+        {
+          $set: {
+            current_views: { $add: ["$current_views", 1] },
+            status: {
+              $cond: {
+                if: { $gte: [{ $add: ["$current_views", 1] }, "$target_views"] },
+                then: "completed",
+                else: "active"
+              }
+            }
+          }
+        }
+      ]
+    );
     res.status(200).json({ message: "View count increased" });
   } catch (err) {
     console.error(err);

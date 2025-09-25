@@ -2,6 +2,8 @@ const mongoose = require("mongoose");
 const Ads = require("../models/Payment_Ads/ads.model");
 const Post = require("../models/post.model");
 const Payment = require("../models/Payment_Ads/payment.model");
+const Comment = require("../models/Comment_Reaction/comment.model");
+const Reaction = require("../models/Comment_Reaction/post_reaction.model");
 
 // Create Ads
 const createAds = async (req, res) => {
@@ -35,6 +37,14 @@ const createAds = async (req, res) => {
             return res.status(403).json({ success: false, message: "You don't have permission to create ads for this post" });
         }
 
+        // Calculate total interactions (comments + reactions)    
+        const [commentCount, reactionCount] = await Promise.all([
+            Comment.countDocuments({ post_id: post_id }),
+            Reaction.countDocuments({ post_id: post_id })
+        ]);
+
+        const totalInteractions = commentCount + reactionCount;
+
         // Validate target_views
         const targetViewsNum = parseInt(target_views);
         if (isNaN(targetViewsNum) || targetViewsNum < 1) {
@@ -48,7 +58,7 @@ const createAds = async (req, res) => {
 
         const minAge = parseInt(target_age.min);
         const maxAge = parseInt(target_age.max);
-        
+
         if (isNaN(minAge) || isNaN(maxAge) || minAge < 0 || maxAge < 0 || minAge > maxAge) {
             return res.status(400).json({ success: false, message: "Invalid age range. Min age must be less than or equal to max age" });
         }
@@ -60,7 +70,7 @@ const createAds = async (req, res) => {
 
         const validGenders = ['male', 'female', 'other'];
         const validatedGenders = target_gender.filter(gender => validGenders.includes(gender));
-        
+
         if (validatedGenders.length === 0) {
             return res.status(400).json({ success: false, message: "At least one valid gender is required (male, female, other)" });
         }
@@ -90,6 +100,7 @@ const createAds = async (req, res) => {
             },
             target_gender: uniqueGenders,
             target_views: targetViewsNum,
+            total_interactions: totalInteractions
         });
 
         const savedAds = await newAds.save();
@@ -251,7 +262,7 @@ const getAllAds = async (req, res) => {
 const getAllAdsByUserId = async (req, res) => {
     try {
         const userId = req.user._id;
-        
+
         if (!mongoose.Types.ObjectId.isValid(userId)) {
             return res.status(400).json({
                 success: false,
@@ -268,13 +279,13 @@ const getAllAdsByUserId = async (req, res) => {
                 data: []
             });
         }
-        
+
         const adsWithPayment = await Promise.all(
             ads.map(async (ad) => {
                 const payment = await Payment.findOne({ ads_id: ad._id })
                     .select("method amount currency status paylink")
                     .lean();
-                
+
                 return {
                     ...ad.toObject(),
                     payment: payment || null
@@ -301,7 +312,7 @@ const getAllAdsByUserId = async (req, res) => {
 const getAdsAnalytics = async (req, res) => {
     try {
         const userId = req.user._id;
-        
+
         if (!mongoose.Types.ObjectId.isValid(userId)) {
             return res.status(400).json({
                 success: false,
@@ -309,10 +320,13 @@ const getAdsAnalytics = async (req, res) => {
             });
         }
 
-        // Aggregate ads data with payment information
+        // Aggregate ads data với payment information
         const analyticsData = await Ads.aggregate([
             {
-                $match: { user_id: userId }
+                $match: {
+                    user_id: userId,
+                    status: { $in: ['completed', 'paused', 'active'] }
+                }
             },
             {
                 $lookup: {
@@ -323,18 +337,53 @@ const getAdsAnalytics = async (req, res) => {
                 }
             },
             {
+                $addFields: {
+                    paidPayment: {
+                        $arrayElemAt: [
+                            {
+                                $filter: {
+                                    input: '$payment',
+                                    cond: { $eq: ['$$this.status', 'paid'] }
+                                }
+                            },
+                            0
+                        ]
+                    }
+                }
+            },
+            {
                 $group: {
                     _id: null,
-                    totalSpend: {
+                    totalSpendVND: {
                         $sum: {
                             $cond: [
-                                { $gt: [{ $size: '$payment' }, 0] },
-                                { $arrayElemAt: ['$payment.amount', 0] },
+                                {
+                                    $and: [
+                                        { $ne: ['$paidPayment', null] },
+                                        { $eq: ['$paidPayment.currency', 'VND'] }
+                                    ]
+                                },
+                                '$paidPayment.amount',
+                                0
+                            ]
+                        }
+                    },
+                    totalSpendUSD: {
+                        $sum: {
+                            $cond: [
+                                {
+                                    $and: [
+                                        { $ne: ['$paidPayment', null] },
+                                        { $eq: ['$paidPayment.currency', 'USD'] }
+                                    ]
+                                },
+                                '$paidPayment.amount',
                                 0
                             ]
                         }
                     },
                     totalReach: { $sum: '$current_views' },
+                    totalInteractions: { $sum: '$total_interactions' },
                     activeAdsCount: {
                         $sum: {
                             $cond: [
@@ -343,17 +392,43 @@ const getAdsAnalytics = async (req, res) => {
                                 0
                             ]
                         }
-                    }
+                    },
+                    completedAdsCount: {
+                        $sum: {
+                            $cond: [
+                                { $eq: ['$status', 'completed'] },
+                                1,
+                                0
+                            ]
+                        }
+                    },
+                    pausedAdsCount: {
+                        $sum: {
+                            $cond: [
+                                { $eq: ['$status', 'paused'] },
+                                1,
+                                0
+                            ]
+                        }
+                    },
+                    totalAdsCount: { $sum: 1 }
                 }
             }
         ]);
 
         const result = analyticsData.length > 0 ? analyticsData[0] : {
-            totalSpend: 0,
+            totalSpendVND: 0,
+            totalSpendUSD: 0,
             totalReach: 0,
-            activeAdsCount: 0
+            totalInteractions: 0,
+            activeAdsCount: 0,
+            completedAdsCount: 0,
+            pausedAdsCount: 0,
+            totalAdsCount: 0
         };
+
         delete result._id;
+
         return res.status(200).json({
             success: true,
             message: "Ads analytics retrieved successfully",
@@ -516,7 +591,6 @@ const updateAd = async (req, res) => {
             target_location,
             target_age,
             target_gender,
-            target_views
         } = req.body;
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -560,7 +634,7 @@ const updateAd = async (req, res) => {
 
             const minAge = parseInt(target_age.min);
             const maxAge = parseInt(target_age.max);
-            
+
             if (isNaN(minAge) || isNaN(maxAge) || minAge < 0 || maxAge < 0 || minAge > maxAge) {
                 return res.status(400).json({ success: false, message: "Invalid age range. Min age must be less than or equal to max age" });
             }
@@ -578,23 +652,12 @@ const updateAd = async (req, res) => {
 
             const validGenders = ['male', 'female', 'other'];
             const validatedGenders = target_gender.filter(gender => validGenders.includes(gender));
-            
+
             if (validatedGenders.length === 0) {
                 return res.status(400).json({ success: false, message: "At least one valid gender is required (male, female, other)" });
             }
 
             updates.target_gender = [...new Set(validatedGenders)];
-        }
-
-        if (target_views !== undefined) {
-            const targetViewsNum = parseInt(target_views);
-            if (isNaN(targetViewsNum) || targetViewsNum < 1) {
-                return res.status(400).json({
-                    success: false,
-                    message: "target_views must be a positive number"
-                });
-            }
-            updates.target_views = targetViewsNum;
         }
 
         // Check if any updates provided
@@ -650,11 +713,11 @@ const deleteAd = async (req, res) => {
             });
         }
 
-        // Only allow deletion if status is waiting_payment
-        if (ad.status !== 'waiting_payment') {
+        // Only allow deletion if status is waiting_payment, paused, payment_failed or canceled
+        if (ad.status === 'active' || ad.status === 'completed') {
             return res.status(400).json({
                 success: false,
-                message: "Can only delete ads with waiting_payment status"
+                message: "Can only delete ads with waiting_payment, paused, payment_failed or canceled status"
             });
         }
 
@@ -931,10 +994,10 @@ const getPostsAvailableForAds = async (req, res) => {
             }
         ]);
 
-        // Get post IDs that have ads with status other than 'completed'
+        // Get post IDs that have ads with status other than 'completed' and 'canceled' 
         const postsWithActiveAds = await Ads.find({
             user_id: new mongoose.Types.ObjectId(user_id),
-            status: { $ne: 'completed' }
+            status: { $ne: 'completed', $ne: 'canceled' }
         }).distinct('post_id');
 
         // Filter out posts that have active ads
@@ -1020,6 +1083,240 @@ const incrementAdView = async (req, res) => {
     }
 };
 
+// Get interaction statistics by date/week for chart
+const getInteractionStats = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const { ads_id } = req.params;
+        const { period = 'day', days = 7 } = req.query;
+
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid user ID"
+            });
+        }
+
+        if (!mongoose.Types.ObjectId.isValid(ads_id)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid ads ID"
+            });
+        }
+
+        // Validate period
+        if (!['day', 'week'].includes(period)) {
+            return res.status(400).json({
+                success: false,
+                message: "Period must be 'day' or 'week'"
+            });
+        }
+
+        const daysBack = parseInt(days) || 7;
+        if (daysBack < 1 || daysBack > 365) {
+            return res.status(400).json({
+                success: false,
+                message: "Days must be between 1 and 365"
+            });
+        }
+
+        // Find the specific ad and check ownership
+        const ad = await Ads.findOne({
+            _id: ads_id,
+            user_id: userId
+        }).select('post_id');
+
+        if (!ad) {
+            return res.status(404).json({
+                success: false,
+                message: "Ad not found or you don't have permission to view it"
+            });
+        }
+
+        // Calculate date range
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(endDate.getDate() - daysBack);
+
+        let groupBy, dateFormat;
+
+        if (period === 'day') {
+            groupBy = {
+                year: { $year: "$createdAt" },
+                month: { $month: "$createdAt" },
+                day: { $dayOfMonth: "$createdAt" }
+            };
+            dateFormat = "%Y-%m-%d";
+        } else {
+            groupBy = {
+                year: { $year: "$createdAt" },
+                week: { $week: "$createdAt" }
+            };
+            dateFormat = "%Y-W%V";
+        }
+
+        // Get comment statistics for this specific post
+        const commentStats = await Comment.aggregate([
+            {
+                $match: {
+                    post_id: ad.post_id,
+                    createdAt: { $gte: startDate, $lte: endDate },
+                    isDeleted: false
+                }
+            },
+            {
+                $group: {
+                    _id: groupBy,
+                    count: { $sum: 1 }
+                }
+            },
+            {
+                $addFields: {
+                    dateString: {
+                        $dateToString: {
+                            format: dateFormat,
+                            date: {
+                                $dateFromParts: period === 'day'
+                                    ? {
+                                        year: "$_id.year",
+                                        month: "$_id.month",
+                                        day: "$_id.day"
+                                    }
+                                    : {
+                                        isoWeekYear: "$_id.year",
+                                        isoWeek: "$_id.week"
+                                    }
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1, "_id.week": 1 }
+            }
+        ]);
+
+        // Get reaction statistics for this specific post
+        const reactionStats = await Reaction.aggregate([
+            {
+                $match: {
+                    post_id: ad.post_id,
+                    createdAt: { $gte: startDate, $lte: endDate }
+                }
+            },
+            {
+                $group: {
+                    _id: groupBy,
+                    count: { $sum: 1 }
+                }
+            },
+            {
+                $addFields: {
+                    dateString: {
+                        $dateToString: {
+                            format: dateFormat,
+                            date: {
+                                $dateFromParts: period === 'day'
+                                    ? {
+                                        year: "$_id.year",
+                                        month: "$_id.month",
+                                        day: "$_id.day"
+                                    }
+                                    : {
+                                        isoWeekYear: "$_id.year",
+                                        isoWeek: "$_id.week"
+                                    }
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1, "_id.week": 1 }
+            }
+        ]);
+
+        // Create a map for easy lookup
+        const commentMap = new Map();
+        commentStats.forEach(item => {
+            commentMap.set(item.dateString, item.count);
+        });
+
+        const reactionMap = new Map();
+        reactionStats.forEach(item => {
+            reactionMap.set(item.dateString, item.count);
+        });
+
+        // Generate complete date range
+        const result = [];
+        const current = new Date(startDate);
+
+        while (current <= endDate) {
+            let dateKey;
+
+            if (period === 'day') {
+                dateKey = current.toISOString().split('T')[0]; // YYYY-MM-DD
+            } else {
+                const year = current.getFullYear();
+                const week = getWeekNumber(current);
+                dateKey = `${year}-W${week.toString().padStart(2, '0')}`;
+            }
+
+            result.push({
+                date: dateKey,
+                comments: commentMap.get(dateKey) || 0,
+                reactions: reactionMap.get(dateKey) || 0,
+                total: (commentMap.get(dateKey) || 0) + (reactionMap.get(dateKey) || 0)
+            });
+
+            // Increment date
+            if (period === 'day') {
+                current.setDate(current.getDate() + 1);
+            } else {
+                current.setDate(current.getDate() + 7);
+            }
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: `Interaction statistics for ad ${ads_id} by ${period} retrieved successfully`,
+            data: {
+                ads_id,
+                post_id: ad.post_id,
+                period,
+                daysBack,
+                startDate: startDate.toISOString().split('T')[0],
+                endDate: endDate.toISOString().split('T')[0],
+                stats: result,
+                summary: {
+                    totalComments: commentStats.reduce((sum, item) => sum + item.count, 0),
+                    totalReactions: reactionStats.reduce((sum, item) => sum + item.count, 0),
+                    totalInteractions: commentStats.reduce((sum, item) => sum + item.count, 0) +
+                        reactionStats.reduce((sum, item) => sum + item.count, 0)
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error("Error getting interaction statistics:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Server error while retrieving interaction statistics",
+            error: error.message
+        });
+    }
+};
+
+// Helper function to get week number
+function getWeekNumber(date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+}
+
+
 module.exports = {
     createAds,
     getAllAds,
@@ -1031,5 +1328,6 @@ module.exports = {
     getPostsAvailableForAds,
     incrementAdView,
     getAllAdsByUserId,
-    getAdsAnalytics
+    getAdsAnalytics,
+    getInteractionStats
 };
