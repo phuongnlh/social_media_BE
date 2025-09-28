@@ -6,11 +6,14 @@ const GroupPost = require("../models/Group/group_post.model");
 const User = require("../models/user.model");
 const notificationService = require("../services/notification.service");
 const adsModel = require("../models/Payment_Ads/ads.model");
+const grpcClient = require("../services/grpcClient");
 const {
   getSocketIO,
   getUserSocketMap,
   getNotificationUserSocketMap,
 } = require("../socket/io-instance");
+const moderationQueue = require("../queues/moderationQueue");
+const moderationService = require("../queues/moderationQueue");
 
 //* Comment:
 // Đếm số lượng bình luận của một bài viết
@@ -20,7 +23,7 @@ const getGroupPostCommentCount = async (req, res) => {
 
     const count = await Comment.countDocuments({
       postgr_id,
-      isDeleted: false
+      isDeleted: false,
     });
 
     res.status(200).json({ count });
@@ -28,7 +31,6 @@ const getGroupPostCommentCount = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 
 // Tạo bình luận mới
 const createComment = async (req, res) => {
@@ -39,7 +41,9 @@ const createComment = async (req, res) => {
 
     // Chỉ nhận 1 trong 2: post_id hoặc postgr_id
     if (!post_id && !postgr_id) {
-      return res.status(400).json({ error: "Must provide post_id or postgr_id" });
+      return res
+        .status(400)
+        .json({ error: "Must provide post_id or postgr_id" });
     }
 
     let media = undefined;
@@ -51,7 +55,11 @@ const createComment = async (req, res) => {
       };
     }
 
-    let level = 0, root_id = null, thread_parent_id = null, ancestors = [], reply_to_comment_id = null;
+    let level = 0,
+      root_id = null,
+      thread_parent_id = null,
+      ancestors = [],
+      reply_to_comment_id = null;
 
     if (parent_comment_id) {
       const parent = await Comment.findById(parent_comment_id).lean();
@@ -88,7 +96,7 @@ const createComment = async (req, res) => {
         ancestors = [parent.root_id ?? parent._id, parent._id];
       } else {
         const l1Id = parent.thread_parent_id ?? parent._id;
-        const rId = parent.root_id ?? (parent.ancestors?.[0] ?? l1Id);
+        const rId = parent.root_id ?? parent.ancestors?.[0] ?? l1Id;
         ancestors = [rId, l1Id];
       }
 
@@ -109,12 +117,37 @@ const createComment = async (req, res) => {
       );
     }
     const comment = await Comment.create({
-      user_id, post_id, postgr_id, content,
+      user_id,
+      post_id,
+      postgr_id,
+      content,
       parent_comment_id,
       media,
-      level, root_id, thread_parent_id, ancestors,
-      reply_to_comment_id
+      level,
+      root_id,
+      thread_parent_id,
+      ancestors,
+      reply_to_comment_id,
     });
+
+    if (media) {
+      console.log("Check image/video for moderation:", media.url);
+      await moderationService.checkCommentImage(
+        comment._id,
+        media.url,
+        media.media_type
+      );
+    }
+
+    grpcClient.CheckComment(
+      { comment_id: comment._id, content: comment.content },
+      async (err, response) => {
+        if (response) {
+          comment.content = response.censor_content;
+          await comment.save();
+        }
+      }
+    );
 
     // Gửi thông báo
     try {
@@ -197,20 +230,21 @@ const getCommentsOfPost = async (req, res) => {
       .sort({ createdAt: 1 })
       .lean();
 
-    const roots = all.filter(c => (c.level ?? 0) === 0);
-    const level1 = all.filter(c => c.level === 1);
-    const level2 = all.filter(c => c.level === 2);
+    const roots = all.filter((c) => (c.level ?? 0) === 0);
+    const level1 = all.filter((c) => c.level === 1);
+    const level2 = all.filter((c) => c.level === 2);
 
     // index nhanh để suy luận quan hệ
-    const byId = new Map(all.map(c => [String(c._id), c]));
+    const byId = new Map(all.map((c) => [String(c._id), c]));
 
     // Gom cấp 1 theo root (chịu trường hợp parent_comment_id bị thiếu)
     const childrenL1 = new Map(); // rootId -> [l1...]
     for (const c of level1) {
-      const rootKey =
-        c.parent_comment_id
-          ? String(c.parent_comment_id)
-          : (c.root_id ? String(c.root_id) : null);
+      const rootKey = c.parent_comment_id
+        ? String(c.parent_comment_id)
+        : c.root_id
+        ? String(c.root_id)
+        : null;
       if (!rootKey) continue;
       if (!childrenL1.has(rootKey)) childrenL1.set(rootKey, []);
       childrenL1.get(rootKey).push(c);
@@ -258,13 +292,13 @@ const getCommentsOfPost = async (req, res) => {
     }
 
     // Build 0 -> 1 -> 2
-    const result = roots.map(r => {
+    const result = roots.map((r) => {
       const l1s = childrenL1.get(String(r._id)) || [];
-      const replies = l1s.map(l1 => {
+      const replies = l1s.map((l1) => {
         const l2s = childrenL2ByThread.get(String(l1._id)) || [];
         return {
           ...l1,
-          replies: l2s.map(l2 => ({
+          replies: l2s.map((l2) => ({
             ...l2,
             replying_to: l2.reply_to_comment_id, // để FE hiện "Replying to ..."
           })),
@@ -486,5 +520,5 @@ module.exports = {
   getReactionsOfComment,
   getUserReactionsForComments,
   getGroupPostCommentCount,
-  countCommentsOfPost
+  countCommentsOfPost,
 };

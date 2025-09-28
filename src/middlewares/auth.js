@@ -1,4 +1,4 @@
-const passport = require("../config/passport")
+const passport = require("../config/passport");
 const redisClient = require("../config/database.redis");
 
 const authenticate = () => async (req, res, next) => {
