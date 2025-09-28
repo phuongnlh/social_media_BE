@@ -23,6 +23,7 @@ router.get('/:group_id/reported-posts', isLogin, groupPostController.getReported
 router.patch('/:post_id/reported-handler', isLogin, groupPostController.handleGroupPostReport); // Xử lý report
 //Hết dành cho quản trị viên
 
+router.patch("/:id/views", groupPostController.increaseViewCount); // Tăng view count cho bài viết trong group
 router.patch("/:post_id/soft-delete", isLogin, groupPostController.softDeleteGroupPost); // Xoá bài viết trong group (chỉ đánh dấu là đã xoá)
 router.post("/", isLogin, uploadGroup.array("media", 10), groupPostController.createGroupPost); // Tạo bài viết trong group
 router.get("/:group_id/:post_id", isLogin, groupPostController.getGroupPostById); // Lấy bài viết theo ID
