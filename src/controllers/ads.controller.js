@@ -4,6 +4,7 @@ const Post = require("../models/post.model");
 const Payment = require("../models/Payment_Ads/payment.model");
 const Comment = require("../models/Comment_Reaction/comment.model");
 const Reaction = require("../models/Comment_Reaction/post_reaction.model");
+const Activity = require("../models/Payment_Ads/activity-ads.model");
 
 // Create Ads
 const createAds = async (req, res) => {
@@ -721,7 +722,23 @@ const deleteAd = async (req, res) => {
             });
         }
 
-        await Ads.findByIdAndDelete(id);
+        await Ads.findByIdAndUpdate(
+            id,
+            {
+                status: 'deleted',
+                deleted_at: new Date()
+            },
+            { new: true }
+        );
+
+        await Activity.create({
+            user_id,
+            ads_id: id,
+            type: 'campaign_deleted',
+            metadata: {
+                campaign_name: ad.campaign_name,
+            }
+        });
 
         return res.status(200).json({
             success: true,
@@ -868,6 +885,32 @@ const updateAdStatus = async (req, res) => {
             { new: true }
         );
 
+        // Create activity based on status
+        let activityType;
+        let metadata = { campaign_name: ad.campaign_name };
+
+        switch (status) {
+            case 'active':
+                activityType = 'campaign_resumed';
+                break;
+            case 'paused':
+                activityType = 'campaign_paused';
+                break;
+            case 'completed':
+                activityType = 'campaign_completed';
+                metadata.final_views = ad.current_views;
+                metadata.target_views = ad.target_views;
+                break;
+        }
+
+        // Create activity record
+        await Activity.create({
+            user_id,
+            ads_id: id,
+            type: activityType,
+            metadata
+        });
+
         return res.status(200).json({
             success: true,
             message: "Ad status updated successfully",
@@ -997,7 +1040,7 @@ const getPostsAvailableForAds = async (req, res) => {
         // Get post IDs that have ads with status other than 'completed' and 'canceled' 
         const postsWithActiveAds = await Ads.find({
             user_id: new mongoose.Types.ObjectId(user_id),
-            status: { $ne: 'completed', $ne: 'canceled' }
+            status: { $nin: ['completed', 'canceled', 'deleted'] }
         }).distinct('post_id');
 
         // Filter out posts that have active ads
@@ -1315,7 +1358,134 @@ function getWeekNumber(date) {
     const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
     return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
 }
+// Get Activities by User ID 
+const getActivitiesByUserId = async (req, res) => {
+    try {
+        const user_id = req.user._id;
+        const { page = 1, limit = 10, search } = req.query;
 
+        if (!mongoose.Types.ObjectId.isValid(user_id)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid user ID"
+            });
+        }
+
+        const pageNum = parseInt(page);
+        const limitNum = parseInt(limit);
+        const skip = (pageNum - 1) * limitNum;
+        const filter = { user_id: new mongoose.Types.ObjectId(user_id) };
+        
+        // Filter by campaign name
+        if (search && search.trim()) {
+            const matchingAds = await Ads.find({
+                user_id: new mongoose.Types.ObjectId(user_id),
+                campaign_name: { $regex: search.trim(), $options: 'i' }
+            }).distinct('_id');
+            
+            if (matchingAds.length === 0) {
+                return res.status(200).json({
+                    success: true,
+                    message: "No activities found",
+                    data: {
+                        docs: [],
+                        totalDocs: 0,
+                        limit: limitNum,
+                        totalPages: 0,
+                        page: pageNum,
+                        pagingCounter: 0,
+                        hasPrevPage: false,
+                        hasNextPage: false,
+                        prevPage: null,
+                        nextPage: null
+                    }
+                });
+            }
+            
+            filter.ads_id = { $in: matchingAds };
+        }
+
+        const result = await Activity.aggregate([
+            { $match: filter },
+            {
+                $facet: {
+                    data: [
+                        {
+                            $lookup: {
+                                from: 'ads',
+                                localField: 'ads_id',
+                                foreignField: '_id',
+                                as: 'campaign',
+                                pipeline: [
+                                    { 
+                                        $project: { 
+                                            campaign_name: 1,
+                                            target_views: 1,
+                                            current_views: 1,
+                                            status: 1,
+                                            created_at: 1
+                                        } 
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            $addFields: {
+                                campaign: { $arrayElemAt: ['$campaign', 0] }
+                            }
+                        },
+                        {
+                            $project: {
+                                _id: 1,
+                                type: 1,
+                                metadata: 1,
+                                created_at: 1,
+                                campaign: 1
+                            }
+                        },
+                        { $sort: { created_at: -1 } },
+                        { $skip: skip },
+                        { $limit: limitNum }
+                    ],
+                    metadata: [
+                        { $count: "total" }
+                    ]
+                }
+            }
+        ]);
+
+        const activities = result[0].data;
+        const totalDocs = result[0].metadata[0]?.total || 0;
+        const totalPages = Math.ceil(totalDocs / limitNum);
+
+        const paginationData = {
+            docs: activities,
+            totalDocs,
+            limit: limitNum,
+            totalPages,
+            page: pageNum,
+            pagingCounter: skip + 1,
+            hasPrevPage: pageNum > 1,
+            hasNextPage: pageNum < totalPages,
+            prevPage: pageNum > 1 ? pageNum - 1 : null,
+            nextPage: pageNum < totalPages ? pageNum + 1 : null
+        };
+
+        return res.status(200).json({
+            success: true,
+            message: "User activities retrieved successfully",
+            data: paginationData
+        });
+
+    } catch (error) {
+        console.error("Error getting user activities:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Server error while retrieving activities",
+            error: error.message
+        });
+    }
+};
 
 module.exports = {
     createAds,
@@ -1329,5 +1499,6 @@ module.exports = {
     incrementAdView,
     getAllAdsByUserId,
     getAdsAnalytics,
-    getInteractionStats
+    getInteractionStats,
+    getActivitiesByUserId
 };

@@ -28,6 +28,7 @@ const AdsSchema = new mongoose.Schema({
   current_views: { type: Number, default: 0, min: 0 }, // Số view hiện tại
   total_interactions: { type: Number, default: 0, min: 0 }, // Tổng số tương tác (like, comment, share)
   started_at: { type: Date }, // Khi nào ads bắt đầu chạy
+  deleted_at: { type: Date, default: null }, // Khi nào ads bị xóa (dùng để soft delete)
   completed_at: { type: Date }, // Khi nào ads hoàn thành
 
   status: {
@@ -39,6 +40,7 @@ const AdsSchema = new mongoose.Schema({
     //completed: Hoàn thành (đã đạt target_views hoặc hết thời gian max)
     //payment_failed: Thanh toán thất bại
     //canceled: người dùng hủy checkout hoặc session hết hạn
+    //deleted: Xóa mềm
     enum: ['active', 'paused', 'completed', 'waiting_payment', 'pending_review', 'payment_failed', 'canceled', 'deleted'],
     default: 'waiting_payment', required: true, index: true
   },

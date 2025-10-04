@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const https = require("https");
 const Ads = require("../models/Payment_Ads/ads.model");
 const Payment = require("../models/Payment_Ads/payment.model");
+const Activity = require("../models/Payment_Ads/activity-ads.model");
 
 const stripe = new Stripe(process.env.STRIPE_TEST_SK);
 
@@ -154,7 +155,6 @@ const createMoMoSession = async (req, res, ads, payment, amount) => {
     }
 
     const orderId = MOMO_CONFIG.partnerCode + new Date().getTime();
-    console.log('=== CREATED MOMO ORDER ID ===', orderId);
     const requestId = orderId;
     const orderInfo = `Ad Campaign: ${ads.campaign_name}`;
     const redirectUrl = `${process.env.FRONTEND_URL}/ads/payment/result?order_id=${orderId}&method=momo`;
@@ -279,7 +279,6 @@ const handleMoMoWebhook = async (req, res) => {
       extraData,
       signature,
     } = req.body;
-    console.log(req.body);
     // Verify signature
     const rawSignature = `accessKey=${MOMO_CONFIG.accessKey}&amount=${amount}&extraData=${extraData}&message=${message}&orderId=${orderId}&orderInfo=${orderInfo}&orderType=${orderType}&partnerCode=${partnerCode}&payType=${payType}&requestId=${requestId}&responseTime=${responseTime}&resultCode=${resultCode}&transId=${transId}`;
 
@@ -296,22 +295,18 @@ const handleMoMoWebhook = async (req, res) => {
     let metadata;
     try {
       metadata = JSON.parse(Buffer.from(extraData, 'base64').toString());
-      console.log("Parsed metadata:", metadata);
     } catch (error) {
       console.error('Error parsing MoMo extraData:', error);
       return res.status(400).json({ message: 'Invalid extraData' });
     }
 
     const { adsId, paymentId } = metadata;
-    console.log("Processing payment for adsId:", adsId, "paymentId:", paymentId);
 
     if (resultCode === 0) {
       // Payment successful
-      console.log("Payment successful, updating status...");
       await handleSuccessfulMoMoPayment(adsId, paymentId, transId);
     } else {
       // Payment failed
-      console.log("Payment failed, cleaning up...");
       await handleFailedMoMoPayment(adsId, paymentId);
     }
 
@@ -325,20 +320,12 @@ const handleMoMoWebhook = async (req, res) => {
 
 // Handle successful MoMo payment
 const handleSuccessfulMoMoPayment = async (adsId, paymentId, transactionId) => {
-  console.log("=== HANDLING SUCCESSFUL MOMO PAYMENT ===");
-  console.log("adsId:", adsId);
-  console.log("paymentId:", paymentId);
-  console.log("transactionId:", transactionId);
-
   try {
     const ad = await Ads.findById(adsId);
     if (!ad) {
       console.error(`Ad not found: ${adsId}`);
       return;
     }
-
-    console.log("Found ad:", ad._id, "current status:", ad.status);
-
     // Update payment status
     const updatedPayment = await Payment.findByIdAndUpdate(paymentId, {
       status: 'paid',
@@ -346,16 +333,20 @@ const handleSuccessfulMoMoPayment = async (adsId, paymentId, transactionId) => {
       completed_at: new Date()
     }, { new: true });
 
-    console.log("Updated payment status:", updatedPayment ? updatedPayment.status : 'Payment not found');
-
     // Activate ads
     const updatedAd = await Ads.findByIdAndUpdate(adsId, {
       status: 'active',
       started_at: new Date()
     }, { new: true });
 
-    console.log("Updated ad status:", updatedAd ? updatedAd.status : 'Ad not found');
-    console.log(`MoMo payment successful for ads: ${adsId}, status set to: active`);
+    await Activity.create({
+      user_id: ad.user_id,
+      ads_id: ad._id,
+      type: 'campaign_started',
+      metadata: {
+        campaign_name: ad.campaign_name
+      }
+    });
   } catch (error) {
     console.error(`Error updating ad status after MoMo payment:`, error);
   }
@@ -372,8 +363,6 @@ const handleFailedMoMoPayment = async (adsId, paymentId) => {
     await Ads.findByIdAndUpdate(adsId, {
       status: 'canceled'
     });
-
-    console.log(`MoMo payment canceled - Ad status set to canceled: ${adsId}`);
   } catch (error) {
     console.error(`Error handling canceled MoMo payment:`, error);
   }
@@ -606,6 +595,14 @@ const handleSuccessfulPayment = async (session) => {
     };
 
     await Ads.findByIdAndUpdate(adsId, updates);
+    await Activity.create({
+      user_id: ad.user_id,
+      ads_id: ad._id,
+      type: 'campaign_started',
+      metadata: {
+        campaign_name: ad.campaign_name
+      }
+    });
 
   } catch (error) {
     console.error(`Error updating ad status after payment:`, error);
@@ -626,7 +623,6 @@ const handleExpiredSession = async (session) => {
       status: 'canceled'
     });
 
-    console.log(`Payment session expired - Ad status set to canceled: ${adsId}`);
   } catch (error) {
     console.error(`Error setting ad status to canceled after session expiry:`, error);
   }
@@ -647,7 +643,6 @@ const handleFailedPayment = async (paymentIntent) => {
         status: 'payment_failed'
       });
 
-      console.log(`Payment failed - Ad status set to payment_failed: ${payment.ads_id}`);
     }
   } catch (error) {
     console.error(`Error handling failed payment:`, error);
@@ -792,7 +787,6 @@ const queryMoMoTransaction = (requestBody) => {
       res.on('end', () => {
         try {
           const response = JSON.parse(body);
-          console.log('MoMo Query API response:', response);
           resolve(response);
         } catch (error) {
           reject(new Error('Invalid JSON response from MoMo Query API'));
@@ -894,7 +888,6 @@ const cancelMoMoTransaction = (requestBody) => {
       res.on('end', () => {
         try {
           const response = JSON.parse(body);
-          console.log('MoMo Cancel API response:', response);
           resolve(response);
         } catch (error) {
           reject(new Error('Invalid JSON response from MoMo Cancel API'));
