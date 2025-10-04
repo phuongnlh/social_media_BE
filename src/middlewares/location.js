@@ -1,3 +1,6 @@
+const { default: axios } = require("axios");
+
+const LOCATIONIQ_KEY = process.env.LOCATIONIQ_KEY;
 module.exports.attachLocation = async (req, res, next) => {
   try {
     const { lat, lng } = req.query; // GPS từ FE (nếu có)
@@ -5,9 +8,9 @@ module.exports.attachLocation = async (req, res, next) => {
 
     if (lat && lng) {
       // Có GPS → geocoding
-      const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&addressdetails=1`;
-      const geoRes = await fetch(url);
-      const data = await geoRes.json();
+      const url = `https://us1.locationiq.com/v1/reverse.php?key=${LOCATIONIQ_KEY}&lat=${lat}&lon=${lng}&format=json`;
+      const geoRes = await axios.get(url);
+      const data = geoRes.data;
 
       const addr = data.address || {};
       location = {

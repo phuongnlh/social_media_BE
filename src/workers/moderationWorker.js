@@ -3,6 +3,8 @@ const Comment = require("../models/Comment_Reaction/comment.model");
 const grpcClient = require("../services/grpcClient");
 const { redisConfig } = require("../config/database.redis");
 const postModel = require("../models/post.model");
+const { getSocketIO, getNotificationUserSocketMap } = require("../socket/io-instance");
+const notificationService = require("../services/notification.service");
 const moderationWorker = new Worker(
   "moderation",
   async (job) => {
@@ -24,9 +26,29 @@ const moderationWorker = new Worker(
             } else {
               update = { moderation_status: response.label };
             }
-            await Comment.findByIdAndUpdate(commentId, update);
+            const comment = await Comment.findByIdAndUpdate(commentId, update);
+            try {
+              const io = getSocketIO();
+              const notificationsNamespace = io.of("/notifications");
+              const notificationUserSocketMap = getNotificationUserSocketMap();
 
-            console.log("Moderation result:", response);
+              await notificationService.createNotificationWithNamespace(
+                notificationsNamespace,
+                comment.user_id.toString(),
+                "system",
+                `Your comment has been blocked due to policy violation.`,
+                notificationUserSocketMap,
+                { fromUser: null, relatedId: commentId }
+              );
+              console.log("Notification sent successfully");
+            } catch (notifyErr) {
+              console.error(
+                "Không thể gửi thông báo chấp nhận kết bạn:",
+                notifyErr
+              );
+              // Tiếp tục thực thi ngay cả khi gửi thông báo thất bại
+            }
+
             resolve(response);
           }
         );

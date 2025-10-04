@@ -10,7 +10,7 @@ const transporter = nodemailer.createTransport({
 });
 
 const sendVerificationEmail = async (to, token) => {
-  const verificationLink = `${process.env.BASE_URL}:${process.env.PORT}/api/v1/user/verify-email?token=${token}`;
+  const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${token}`;
 
   const mailOptions = {
     from: `"My App" <${process.env.SMTP_EMAIL}>`,
@@ -29,6 +29,7 @@ const sendVerificationEmail = async (to, token) => {
   try {
     await transporter.sendMail(mailOptions);
     console.log("Verification email sent to:", to);
+    return true;
   } catch (error) {
     console.error("Error sending email:", error);
     throw new Error("Cannot send email");
@@ -37,18 +38,32 @@ const sendVerificationEmail = async (to, token) => {
 
 const sendResetPasswordEmail = async (to, link) => {
   const mailOptions = {
-    from: `"My App" <${process.env.SMTP_EMAIL}>`,
+    from: {
+      name: "My App",
+      address: process.env.SMTP_EMAIL,
+    },
     to,
-    subject: "Reset Your Password",
+    subject: "🔒 Reset Your Password",
+    text: `You requested to reset your password.\n\nClick the link below (valid for 15 minutes):\n${link}`,
     html: `
-      <h2>Password Reset</h2>
-      <p>Click the link below to reset your password:</p>
-      <p><strong>Note:</strong> This link will expire in 15 minutes.</p>
-      <a href="${link}" style="padding: 10px 20px; background: #4CAF50; color: white; text-decoration: none;">Reset Password</a>
+      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+        <h2 style="color: #4CAF50;">Password Reset Request</h2>
+        <p>You requested to reset your password. Click the button below to continue:</p>
+        <a href="${link}" 
+           style="display:inline-block; margin: 10px 0; padding: 12px 20px; background: #4CAF50; color: #fff; 
+                  text-decoration: none; border-radius: 5px; font-weight: bold;">
+          Reset Password
+        </a>
+        <p><strong>Note:</strong> This link will expire in 15 minutes.</p>
+        <hr>
+        <p style="font-size: 12px; color: #777;">
+          If you did not request this, please ignore this email.
+        </p>
+      </div>
     `,
   };
 
-  await transporter.sendMail(mailOptions);
+  return transporter.sendMail(mailOptions);
 };
 
 module.exports = { sendVerificationEmail, sendResetPasswordEmail };

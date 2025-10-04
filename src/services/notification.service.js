@@ -91,7 +91,8 @@ const getNotifications = async (userId, limit = 20, skip = 0) => {
       .sort({ createdAt: -1 })
       .limit(limit)
       .skip(skip)
-      .populate("from_user", "fullName avatar_url");
+      .populate("from_user", "fullName avatar_url")
+      .populate("user_id", "fullName avatar_url");
   } catch (error) {
     console.error("Error getting notifications:", error);
     throw error;
