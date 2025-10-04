@@ -20,9 +20,9 @@ app.use(
     origin: [
       "http://localhost:5173",
       "http://127.0.0.1:5173",
-      "http://192.168.21.145:5173",
-      "https://74027a3132cc.ngrok-free.app",
-      "http://10.0.3.2:8081",
+      "https://dailyvibe.local",
+      "https://admin.dailyvibe.local",
+      "https://api.dailyvibe.local",
     ],
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: [

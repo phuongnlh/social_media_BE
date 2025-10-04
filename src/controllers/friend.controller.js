@@ -6,6 +6,7 @@ const {
   getSocketIO,
   getNotificationUserSocketMap,
 } = require("../socket/io-instance");
+const postModel = require("../models/post.model");
 
 // Gửi lời mời kết bạn đến một người dùng khác
 const sendFriendRequest = async (req, res) => {
@@ -291,17 +292,40 @@ const searchFriends = async (req, res) => {
   try {
     const friends = await User.find({
       $or: [{ fullName: { $regex: query, $options: "i" } }],
-    }).select("_id fullName avatar_url");
-    res.json(friends);
+    }).select("_id fullName avatar_url username bio");
+
+    // Với mỗi friend, gắn thêm số post + số bạn
+    const friendsWithStats = await Promise.all(
+      friends.map(async (friend) => {
+        const postsCount = await postModel.countDocuments({
+          user_id: friend._id,
+          is_deleted: false,
+        });
+
+        const friendsCount = await Friendship.countDocuments({
+          $or: [{ user_id_1: friend._id }, { user_id_2: friend._id }],
+          status: "accepted",
+        });
+
+        return {
+          ...friend.toObject(),
+          postsCount,
+          friendsCount,
+        };
+      })
+    );
+
+    res.json(friendsWithStats);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
 // Lấy trạng thái quan hệ bạn bè giữa user hiện tại và profile đang xem
 const getFriendshipStatus = async (req, res) => {
   try {
-    const userId = req.user._id; 
-    const { profileUserId } = req.params; 
+    const userId = req.user._id;
+    const { profileUserId } = req.params;
 
     // Tìm xem có mối quan hệ bạn bè nào giữa 2 người chưa
     const friendship = await Friendship.findOne({
@@ -321,7 +345,7 @@ const getFriendshipStatus = async (req, res) => {
 
     if (friendship.status === "pending") {
       if (friendship.user_id_1.toString() === userId.toString()) {
-        return res.json({ status: "pending_sent" }); 
+        return res.json({ status: "pending_sent" });
       } else {
         return res.json({ status: "pending_received" });
       }
@@ -330,6 +354,19 @@ const getFriendshipStatus = async (req, res) => {
       return res.json({ status: "none" });
     }
     res.json({ status: friendship.status, friendshipId: friendship._id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+const countFriends = async (req, res) => {
+  const userId = req.params.userId;
+  try {
+    const count = await Friendship.countDocuments({
+      $or: [{ user_id_1: userId }, { user_id_2: userId }],
+      status: "accepted",
+    });
+    res.status(200).json(count);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -345,4 +382,5 @@ module.exports = {
   withdrawFriendRequest,
   getUnfriendedUsers,
   getIncomingFriendRequests,
+  countFriends,
 };

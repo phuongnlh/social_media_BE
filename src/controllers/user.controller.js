@@ -10,14 +10,15 @@ const UserSetting = require("../models/user_settings.model");
 const Friendship = require("../models/friendship.model");
 const speakeasy = require("speakeasy");
 const qrcode = require("qrcode");
+const { default: mongoose } = require("mongoose");
 // Đăng ký tài khoản người dùng mới
 const registerUser = async (req, res) => {
   try {
-    const { fullName, email, password } = req.body;
+    const { fullName, email, password, gender, dateOfBirth } = req.body;
     // Kiểm tra email đã tồn tại hay chưa
     const checkUser = await User.findOne({ email });
     if (checkUser) {
-      return res.status(400).json({ message: "Email đã được sử dụng" });
+      return res.status(400).json({ message: "Email already exists." });
     }
     const username = `${Date.now()}`;
     // Tạo mật khẩu băm và muối
@@ -29,19 +30,25 @@ const registerUser = async (req, res) => {
       hash,
       salt,
       username,
+      gender,
+      dateOfBirth,
     }).save();
     // Tạo token xác thực email
     const token = signToken({ id: newUser._id }, "15m");
 
     // Gửi email xác thực tài khoản
-    await sendVerificationEmail(email, token);
+    const result = await sendVerificationEmail(email, token);
+    if (!result) {
+      await User.findByIdAndDelete(newUser._id);
+      throw new Error("Failed to send verification email.");
+    }
 
     res.status(201).json({
       message:
         "Registration successful! Please check your email to verify your account.",
     });
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    return res.status(500).json({ message: "Internal server error." });
   }
 };
 
@@ -99,7 +106,7 @@ const loginUser = async (req, res) => {
 
     if (user.twoFAEnabled) {
       // Yêu cầu nhập mã OTP
-      return res.json({ require2FA: true, userId: user._id });
+      return res.status(200).json({ require2FA: true, userId: user._id });
     }
 
     // Tạo access token và refresh token
@@ -158,7 +165,7 @@ const logoutUser = async (req, res) => {
     await multi.exec();
 
     // Xóa cookie refresh token
-    res.clearCookie("refreshToken", { path: "/" });
+    res.clearCookie("refreshToken");
 
     res.json({ message: "Đăng xuất thành công" });
   } catch (err) {
@@ -204,7 +211,7 @@ const logoutAllUser = async (req, res) => {
     }
 
     // Xóa cookie
-    res.clearCookie("refreshToken", { path: "/api/v1/" });
+    res.clearCookie("refreshToken");
 
     res.json({ message: "Đã đăng xuất tất cả các phiên thành công" });
   } catch (err) {
@@ -219,18 +226,24 @@ const changePassword = async (req, res) => {
     const { oldPassword, newPassword } = req.body;
 
     if (!oldPassword || !newPassword) {
-      return res.status(400).json({ message: "Thiếu trường mật khẩu" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing password fields" });
     }
 
     // Tìm người dùng theo ID
     const user = await User.findById(userId);
     if (!user)
-      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
 
     // Kiểm tra mật khẩu cũ
     const isValid = validatePwd(oldPassword, user.hash, user.salt);
     if (!isValid) {
-      return res.status(401).json({ message: "Mật khẩu cũ không chính xác" });
+      return res
+        .status(401)
+        .json({ success: false, message: "Old password is incorrect" });
     }
 
     // Tạo hash mới từ mật khẩu mới
@@ -239,6 +252,14 @@ const changePassword = async (req, res) => {
     user.salt = salt;
     await user.save();
 
+    const token = req.headers.authorization?.split(" ")[1];
+    const decoded = verifyToken(token);
+    const exp = decoded?.exp;
+    const ttl = exp - Math.floor(Date.now() / 1000); // Thời gian còn lại của token
+
+    if (ttl > 0) {
+      await redisClient.set(`blacklist:${token}`, "true", { EX: ttl });
+    }
     // Đăng xuất tất cả phiên hiện tại (vô hiệu hóa tất cả token)
     const userRefreshTokensSet = `user-sessions:${user._id}`;
     const allTokens = await redisClient.sMembers(userRefreshTokensSet);
@@ -252,11 +273,14 @@ const changePassword = async (req, res) => {
     }
 
     // Xóa cookie của phiên hiện tại
-    res.clearCookie("refreshToken", { path: "/api/v1/" });
+    res.clearCookie("refreshToken");
 
-    res.json({ message: "Mật khẩu đã được thay đổi thành công" });
+    res.json({
+      success: true,
+      message: "Password changed successfully. Please log in again.",
+    });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
@@ -272,7 +296,7 @@ const forgotPassword = async (req, res) => {
     const resetToken = signToken({ id: user._id }, "15m");
 
     // Tạo liên kết khôi phục mật khẩu
-    const resetLink = `${process.env.BASE_URL}:${process.env.PORT}/api/v1/user/reset-password?token=${resetToken}`;
+    const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
     // Gửi email khôi phục mật khẩu
     await sendResetPasswordEmail(user.email, resetLink);
 
@@ -302,14 +326,14 @@ const resetPassword = async (req, res) => {
     user.salt = salt;
     await user.save();
 
-    res.json({ message: "Đặt lại mật khẩu thành công" });
+    res.status(200).json({ message: "Đặt lại mật khẩu thành công" });
   } catch (err) {
     // Nếu lỗi là do token không hợp lệ hoặc hết hạn
-    if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
-      return res
-        .status(401)
-        .json({ message: "Token không hợp lệ hoặc đã hết hạn" });
-    }
+    // if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
+    //   return res
+    //     .status(401)
+    //     .json({ message: "Token không hợp lệ hoặc đã hết hạn" });
+    // }
     // Các lỗi khác là lỗi server
     console.error(err); // Ghi lại lỗi để debug
     return res.status(500).json({ message: "Đã xảy ra lỗi từ máy chủ." });
@@ -319,7 +343,9 @@ const resetPassword = async (req, res) => {
 const getUser = async (req, res) => {
   const userId = req.user._id; // Đã được xác thực từ middleware
   try {
-    const user = await User.findById(userId).select("-hash -salt -isDeleted");
+    const user = await User.findById(userId).select(
+      "-hash -salt -isDeleted -twoFASecret"
+    );
     res.status(200).json(user);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -328,9 +354,10 @@ const getUser = async (req, res) => {
 
 const getUserById = async (req, res) => {
   const userId = req.params.userId;
-  console.log("Get user by id: ", userId);
   try {
-    const user = await User.findById(userId).select("-hash -salt -isDeleted");
+    const user = await User.findById(userId).select(
+      "-hash -salt -isDeleted -twoFASecret"
+    );
     res.status(200).json(user);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -497,8 +524,15 @@ const getProfileWithPrivacy = async (req, res) => {
   const profileUserId = req.params.userId;
 
   try {
-    const user = await User.findById(profileUserId).select(
-      "-hash -salt -isDeleted"
+    let query = [{ username: profileUserId }];
+
+    // Nếu là ObjectId hợp lệ thì thêm vào query
+    if (mongoose.Types.ObjectId.isValid(profileUserId)) {
+      query.unshift({ _id: profileUserId });
+    }
+
+    const user = await User.findOne({ $or: query }).select(
+      "-hash -salt -isDeleted -twoFASecret"
     );
     if (!user)
       return res.status(404).json({ message: "Không tìm thấy người dùng" });
@@ -682,7 +716,7 @@ const verifyTwoFA = async (req, res) => {
 
 const verifyTwoFALogin = async (req, res) => {
   try {
-    const { userId, token } = req.body;
+    const { userId, code } = req.body;
     const user = await User.findById(userId);
     if (!user)
       return res.status(404).json({ message: "Không tìm thấy người dùng" });
@@ -691,7 +725,7 @@ const verifyTwoFALogin = async (req, res) => {
     const verified = speakeasy.totp.verify({
       secret: user.twoFASecret,
       encoding: "base32",
-      token,
+      token: code,
       window: 1,
     });
     if (verified) {

@@ -22,7 +22,7 @@ const getGroupPostCommentCount = async (req, res) => {
     const { postgr_id } = req.params;
 
     const count = await Comment.countDocuments({
-      postgr_id,
+      $or: [{ post_id: postgr_id }, { postgr_id: postgr_id }],
       isDeleted: false,
     });
 

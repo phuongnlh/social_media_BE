@@ -5,7 +5,7 @@
   "main": "src/app.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js && stripe listen --forward-to localhost:9999/api/v1/payment/webhook",
+    "dev": "nodemon src/server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
