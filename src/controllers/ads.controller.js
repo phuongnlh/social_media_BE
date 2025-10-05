@@ -2,6 +2,9 @@ const mongoose = require("mongoose");
 const Ads = require("../models/Payment_Ads/ads.model");
 const Post = require("../models/post.model");
 const Payment = require("../models/Payment_Ads/payment.model");
+const Comment = require("../models/Comment_Reaction/comment.model");
+const Reaction = require("../models/Comment_Reaction/post_reaction.model");
+const Activity = require("../models/Payment_Ads/activity-ads.model");
 
 // Create Ads
 const createAds = async (req, res) => {
@@ -35,15 +38,47 @@ const createAds = async (req, res) => {
             return res.status(403).json({ success: false, message: "You don't have permission to create ads for this post" });
         }
 
+        // Calculate total interactions (comments + reactions)    
+        const [commentCount, reactionCount] = await Promise.all([
+            Comment.countDocuments({ post_id: post_id }),
+            Reaction.countDocuments({ post_id: post_id })
+        ]);
+
+        const totalInteractions = commentCount + reactionCount;
+
         // Validate target_views
         const targetViewsNum = parseInt(target_views);
         if (isNaN(targetViewsNum) || targetViewsNum < 1) {
             return res.status(400).json({ success: false, message: "target_views must be a positive number" });
         }
 
-        if (!["male", "female", "other", "all"].includes(String(target_gender))) {
-            return res.status(400).json({ success: false, message: "Invalid target gender" });
+        // Validate target_age object
+        if (!target_age || typeof target_age !== 'object' || !target_age.min || !target_age.max) {
+            return res.status(400).json({ success: false, message: "target_age must be an object with min and max properties" });
         }
+
+        const minAge = parseInt(target_age.min);
+        const maxAge = parseInt(target_age.max);
+
+        if (isNaN(minAge) || isNaN(maxAge) || minAge < 0 || maxAge < 0 || minAge > maxAge) {
+            return res.status(400).json({ success: false, message: "Invalid age range. Min age must be less than or equal to max age" });
+        }
+
+        // Validate target_gender array
+        if (!Array.isArray(target_gender) || target_gender.length === 0) {
+            return res.status(400).json({ success: false, message: "Target gender must be a non-empty array" });
+        }
+
+        const validGenders = ['male', 'female', 'other'];
+        const validatedGenders = target_gender.filter(gender => validGenders.includes(gender));
+
+        if (validatedGenders.length === 0) {
+            return res.status(400).json({ success: false, message: "At least one valid gender is required (male, female, other)" });
+        }
+
+        // Remove duplicates
+        const uniqueGenders = [...new Set(validatedGenders)];
+
         // Validate target_location is an array
         if (!Array.isArray(target_location) || target_location.length === 0) {
             return res.status(400).json({ success: false, message: "Target location must be a non-empty array" });
@@ -60,9 +95,13 @@ const createAds = async (req, res) => {
             post_id,
             campaign_name: String(campaign_name).trim(),
             target_location: validatedLocations,
-            target_age: String(target_age).trim(),
-            target_gender: String(target_gender),
+            target_age: {
+                min: minAge,
+                max: maxAge
+            },
+            target_gender: uniqueGenders,
             target_views: targetViewsNum,
+            total_interactions: totalInteractions
         });
 
         const savedAds = await newAds.save();
@@ -224,7 +263,7 @@ const getAllAds = async (req, res) => {
 const getAllAdsByUserId = async (req, res) => {
     try {
         const userId = req.user._id;
-        
+
         if (!mongoose.Types.ObjectId.isValid(userId)) {
             return res.status(400).json({
                 success: false,
@@ -241,13 +280,13 @@ const getAllAdsByUserId = async (req, res) => {
                 data: []
             });
         }
-        
+
         const adsWithPayment = await Promise.all(
             ads.map(async (ad) => {
                 const payment = await Payment.findOne({ ads_id: ad._id })
-                    .select("method amount currency status")
+                    .select("method amount currency status paylink")
                     .lean();
-                
+
                 return {
                     ...ad.toObject(),
                     payment: payment || null
@@ -274,7 +313,7 @@ const getAllAdsByUserId = async (req, res) => {
 const getAdsAnalytics = async (req, res) => {
     try {
         const userId = req.user._id;
-        
+
         if (!mongoose.Types.ObjectId.isValid(userId)) {
             return res.status(400).json({
                 success: false,
@@ -282,10 +321,13 @@ const getAdsAnalytics = async (req, res) => {
             });
         }
 
-        // Aggregate ads data with payment information
+        // Aggregate ads data với payment information
         const analyticsData = await Ads.aggregate([
             {
-                $match: { user_id: userId }
+                $match: {
+                    user_id: userId,
+                    status: { $in: ['completed', 'paused', 'active'] }
+                }
             },
             {
                 $lookup: {
@@ -296,18 +338,53 @@ const getAdsAnalytics = async (req, res) => {
                 }
             },
             {
+                $addFields: {
+                    paidPayment: {
+                        $arrayElemAt: [
+                            {
+                                $filter: {
+                                    input: '$payment',
+                                    cond: { $eq: ['$$this.status', 'paid'] }
+                                }
+                            },
+                            0
+                        ]
+                    }
+                }
+            },
+            {
                 $group: {
                     _id: null,
-                    totalSpend: {
+                    totalSpendVND: {
                         $sum: {
                             $cond: [
-                                { $gt: [{ $size: '$payment' }, 0] },
-                                { $arrayElemAt: ['$payment.amount', 0] },
+                                {
+                                    $and: [
+                                        { $ne: ['$paidPayment', null] },
+                                        { $eq: ['$paidPayment.currency', 'VND'] }
+                                    ]
+                                },
+                                '$paidPayment.amount',
+                                0
+                            ]
+                        }
+                    },
+                    totalSpendUSD: {
+                        $sum: {
+                            $cond: [
+                                {
+                                    $and: [
+                                        { $ne: ['$paidPayment', null] },
+                                        { $eq: ['$paidPayment.currency', 'USD'] }
+                                    ]
+                                },
+                                '$paidPayment.amount',
                                 0
                             ]
                         }
                     },
                     totalReach: { $sum: '$current_views' },
+                    totalInteractions: { $sum: '$total_interactions' },
                     activeAdsCount: {
                         $sum: {
                             $cond: [
@@ -316,17 +393,43 @@ const getAdsAnalytics = async (req, res) => {
                                 0
                             ]
                         }
-                    }
+                    },
+                    completedAdsCount: {
+                        $sum: {
+                            $cond: [
+                                { $eq: ['$status', 'completed'] },
+                                1,
+                                0
+                            ]
+                        }
+                    },
+                    pausedAdsCount: {
+                        $sum: {
+                            $cond: [
+                                { $eq: ['$status', 'paused'] },
+                                1,
+                                0
+                            ]
+                        }
+                    },
+                    totalAdsCount: { $sum: 1 }
                 }
             }
         ]);
 
         const result = analyticsData.length > 0 ? analyticsData[0] : {
-            totalSpend: 0,
+            totalSpendVND: 0,
+            totalSpendUSD: 0,
             totalReach: 0,
-            activeAdsCount: 0
+            totalInteractions: 0,
+            activeAdsCount: 0,
+            completedAdsCount: 0,
+            pausedAdsCount: 0,
+            totalAdsCount: 0
         };
+
         delete result._id;
+
         return res.status(200).json({
             success: true,
             message: "Ads analytics retrieved successfully",
@@ -489,7 +592,6 @@ const updateAd = async (req, res) => {
             target_location,
             target_age,
             target_gender,
-            target_views
         } = req.body;
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -516,32 +618,47 @@ const updateAd = async (req, res) => {
         }
 
         if (target_location !== undefined) {
-            updates.target_location = String(target_location).trim();
+            if (!Array.isArray(target_location) || target_location.length === 0) {
+                return res.status(400).json({ success: false, message: "Target location must be a non-empty array" });
+            }
+            const validatedLocations = target_location.map(location => String(location).trim()).filter(loc => loc.length > 0);
+            if (validatedLocations.length === 0) {
+                return res.status(400).json({ success: false, message: "At least one valid location is required" });
+            }
+            updates.target_location = validatedLocations;
         }
 
         if (target_age !== undefined) {
-            updates.target_age = String(target_age).trim();
+            if (!target_age || typeof target_age !== 'object' || !target_age.min || !target_age.max) {
+                return res.status(400).json({ success: false, message: "target_age must be an object with min and max properties" });
+            }
+
+            const minAge = parseInt(target_age.min);
+            const maxAge = parseInt(target_age.max);
+
+            if (isNaN(minAge) || isNaN(maxAge) || minAge < 0 || maxAge < 0 || minAge > maxAge) {
+                return res.status(400).json({ success: false, message: "Invalid age range. Min age must be less than or equal to max age" });
+            }
+
+            updates.target_age = {
+                min: minAge,
+                max: maxAge
+            };
         }
 
         if (target_gender !== undefined) {
-            if (!['male', 'female', 'other', 'all'].includes(target_gender)) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid target gender"
-                });
+            if (!Array.isArray(target_gender) || target_gender.length === 0) {
+                return res.status(400).json({ success: false, message: "Target gender must be a non-empty array" });
             }
-            updates.target_gender = target_gender;
-        }
 
-        if (target_views !== undefined) {
-            const targetViewsNum = parseInt(target_views);
-            if (isNaN(targetViewsNum) || targetViewsNum < 1) {
-                return res.status(400).json({
-                    success: false,
-                    message: "target_views must be a positive number"
-                });
+            const validGenders = ['male', 'female', 'other'];
+            const validatedGenders = target_gender.filter(gender => validGenders.includes(gender));
+
+            if (validatedGenders.length === 0) {
+                return res.status(400).json({ success: false, message: "At least one valid gender is required (male, female, other)" });
             }
-            updates.target_views = targetViewsNum;
+
+            updates.target_gender = [...new Set(validatedGenders)];
         }
 
         // Check if any updates provided
@@ -597,15 +714,31 @@ const deleteAd = async (req, res) => {
             });
         }
 
-        // Only allow deletion if status is waiting_payment
-        if (ad.status !== 'waiting_payment') {
+        // Only allow deletion if status is waiting_payment, paused, payment_failed or canceled
+        if (ad.status === 'active' || ad.status === 'completed') {
             return res.status(400).json({
                 success: false,
-                message: "Can only delete ads with waiting_payment status"
+                message: "Can only delete ads with waiting_payment, paused, payment_failed or canceled status"
             });
         }
 
-        await Ads.findByIdAndDelete(id);
+        await Ads.findByIdAndUpdate(
+            id,
+            {
+                status: 'deleted',
+                deleted_at: new Date()
+            },
+            { new: true }
+        );
+
+        await Activity.create({
+            user_id,
+            ads_id: id,
+            type: 'campaign_deleted',
+            metadata: {
+                campaign_name: ad.campaign_name,
+            }
+        });
 
         return res.status(200).json({
             success: true,
@@ -752,6 +885,32 @@ const updateAdStatus = async (req, res) => {
             { new: true }
         );
 
+        // Create activity based on status
+        let activityType;
+        let metadata = { campaign_name: ad.campaign_name };
+
+        switch (status) {
+            case 'active':
+                activityType = 'campaign_resumed';
+                break;
+            case 'paused':
+                activityType = 'campaign_paused';
+                break;
+            case 'completed':
+                activityType = 'campaign_completed';
+                metadata.final_views = ad.current_views;
+                metadata.target_views = ad.target_views;
+                break;
+        }
+
+        // Create activity record
+        await Activity.create({
+            user_id,
+            ads_id: id,
+            type: activityType,
+            metadata
+        });
+
         return res.status(200).json({
             success: true,
             message: "Ad status updated successfully",
@@ -878,10 +1037,10 @@ const getPostsAvailableForAds = async (req, res) => {
             }
         ]);
 
-        // Get post IDs that have ads with status other than 'completed'
+        // Get post IDs that have ads with status other than 'completed' and 'canceled' 
         const postsWithActiveAds = await Ads.find({
             user_id: new mongoose.Types.ObjectId(user_id),
-            status: { $ne: 'completed' }
+            status: { $nin: ['completed', 'canceled', 'deleted'] }
         }).distinct('post_id');
 
         // Filter out posts that have active ads
@@ -967,6 +1126,367 @@ const incrementAdView = async (req, res) => {
     }
 };
 
+// Get interaction statistics by date/week for chart
+const getInteractionStats = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const { ads_id } = req.params;
+        const { period = 'day', days = 7 } = req.query;
+
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid user ID"
+            });
+        }
+
+        if (!mongoose.Types.ObjectId.isValid(ads_id)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid ads ID"
+            });
+        }
+
+        // Validate period
+        if (!['day', 'week'].includes(period)) {
+            return res.status(400).json({
+                success: false,
+                message: "Period must be 'day' or 'week'"
+            });
+        }
+
+        const daysBack = parseInt(days) || 7;
+        if (daysBack < 1 || daysBack > 365) {
+            return res.status(400).json({
+                success: false,
+                message: "Days must be between 1 and 365"
+            });
+        }
+
+        // Find the specific ad and check ownership
+        const ad = await Ads.findOne({
+            _id: ads_id,
+            user_id: userId
+        }).select('post_id');
+
+        if (!ad) {
+            return res.status(404).json({
+                success: false,
+                message: "Ad not found or you don't have permission to view it"
+            });
+        }
+
+        // Calculate date range
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(endDate.getDate() - daysBack);
+
+        let groupBy, dateFormat;
+
+        if (period === 'day') {
+            groupBy = {
+                year: { $year: "$createdAt" },
+                month: { $month: "$createdAt" },
+                day: { $dayOfMonth: "$createdAt" }
+            };
+            dateFormat = "%Y-%m-%d";
+        } else {
+            groupBy = {
+                year: { $year: "$createdAt" },
+                week: { $week: "$createdAt" }
+            };
+            dateFormat = "%Y-W%V";
+        }
+
+        // Get comment statistics for this specific post
+        const commentStats = await Comment.aggregate([
+            {
+                $match: {
+                    post_id: ad.post_id,
+                    createdAt: { $gte: startDate, $lte: endDate },
+                    isDeleted: false
+                }
+            },
+            {
+                $group: {
+                    _id: groupBy,
+                    count: { $sum: 1 }
+                }
+            },
+            {
+                $addFields: {
+                    dateString: {
+                        $dateToString: {
+                            format: dateFormat,
+                            date: {
+                                $dateFromParts: period === 'day'
+                                    ? {
+                                        year: "$_id.year",
+                                        month: "$_id.month",
+                                        day: "$_id.day"
+                                    }
+                                    : {
+                                        isoWeekYear: "$_id.year",
+                                        isoWeek: "$_id.week"
+                                    }
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1, "_id.week": 1 }
+            }
+        ]);
+
+        // Get reaction statistics for this specific post
+        const reactionStats = await Reaction.aggregate([
+            {
+                $match: {
+                    post_id: ad.post_id,
+                    createdAt: { $gte: startDate, $lte: endDate }
+                }
+            },
+            {
+                $group: {
+                    _id: groupBy,
+                    count: { $sum: 1 }
+                }
+            },
+            {
+                $addFields: {
+                    dateString: {
+                        $dateToString: {
+                            format: dateFormat,
+                            date: {
+                                $dateFromParts: period === 'day'
+                                    ? {
+                                        year: "$_id.year",
+                                        month: "$_id.month",
+                                        day: "$_id.day"
+                                    }
+                                    : {
+                                        isoWeekYear: "$_id.year",
+                                        isoWeek: "$_id.week"
+                                    }
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1, "_id.week": 1 }
+            }
+        ]);
+
+        // Create a map for easy lookup
+        const commentMap = new Map();
+        commentStats.forEach(item => {
+            commentMap.set(item.dateString, item.count);
+        });
+
+        const reactionMap = new Map();
+        reactionStats.forEach(item => {
+            reactionMap.set(item.dateString, item.count);
+        });
+
+        // Generate complete date range
+        const result = [];
+        const current = new Date(startDate);
+
+        while (current <= endDate) {
+            let dateKey;
+
+            if (period === 'day') {
+                dateKey = current.toISOString().split('T')[0]; // YYYY-MM-DD
+            } else {
+                const year = current.getFullYear();
+                const week = getWeekNumber(current);
+                dateKey = `${year}-W${week.toString().padStart(2, '0')}`;
+            }
+
+            result.push({
+                date: dateKey,
+                comments: commentMap.get(dateKey) || 0,
+                reactions: reactionMap.get(dateKey) || 0,
+                total: (commentMap.get(dateKey) || 0) + (reactionMap.get(dateKey) || 0)
+            });
+
+            // Increment date
+            if (period === 'day') {
+                current.setDate(current.getDate() + 1);
+            } else {
+                current.setDate(current.getDate() + 7);
+            }
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: `Interaction statistics for ad ${ads_id} by ${period} retrieved successfully`,
+            data: {
+                ads_id,
+                post_id: ad.post_id,
+                period,
+                daysBack,
+                startDate: startDate.toISOString().split('T')[0],
+                endDate: endDate.toISOString().split('T')[0],
+                stats: result,
+                summary: {
+                    totalComments: commentStats.reduce((sum, item) => sum + item.count, 0),
+                    totalReactions: reactionStats.reduce((sum, item) => sum + item.count, 0),
+                    totalInteractions: commentStats.reduce((sum, item) => sum + item.count, 0) +
+                        reactionStats.reduce((sum, item) => sum + item.count, 0)
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error("Error getting interaction statistics:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Server error while retrieving interaction statistics",
+            error: error.message
+        });
+    }
+};
+
+// Helper function to get week number
+function getWeekNumber(date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+}
+// Get Activities by User ID 
+const getActivitiesByUserId = async (req, res) => {
+    try {
+        const user_id = req.user._id;
+        const { page = 1, limit = 10, search } = req.query;
+
+        if (!mongoose.Types.ObjectId.isValid(user_id)) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid user ID"
+            });
+        }
+
+        const pageNum = parseInt(page);
+        const limitNum = parseInt(limit);
+        const skip = (pageNum - 1) * limitNum;
+        const filter = { user_id: new mongoose.Types.ObjectId(user_id) };
+        
+        // Filter by campaign name
+        if (search && search.trim()) {
+            const matchingAds = await Ads.find({
+                user_id: new mongoose.Types.ObjectId(user_id),
+                campaign_name: { $regex: search.trim(), $options: 'i' }
+            }).distinct('_id');
+            
+            if (matchingAds.length === 0) {
+                return res.status(200).json({
+                    success: true,
+                    message: "No activities found",
+                    data: {
+                        docs: [],
+                        totalDocs: 0,
+                        limit: limitNum,
+                        totalPages: 0,
+                        page: pageNum,
+                        pagingCounter: 0,
+                        hasPrevPage: false,
+                        hasNextPage: false,
+                        prevPage: null,
+                        nextPage: null
+                    }
+                });
+            }
+            
+            filter.ads_id = { $in: matchingAds };
+        }
+
+        const result = await Activity.aggregate([
+            { $match: filter },
+            {
+                $facet: {
+                    data: [
+                        {
+                            $lookup: {
+                                from: 'ads',
+                                localField: 'ads_id',
+                                foreignField: '_id',
+                                as: 'campaign',
+                                pipeline: [
+                                    { 
+                                        $project: { 
+                                            campaign_name: 1,
+                                            target_views: 1,
+                                            current_views: 1,
+                                            status: 1,
+                                            created_at: 1
+                                        } 
+                                    }
+                                ]
+                            }
+                        },
+                        {
+                            $addFields: {
+                                campaign: { $arrayElemAt: ['$campaign', 0] }
+                            }
+                        },
+                        {
+                            $project: {
+                                _id: 1,
+                                type: 1,
+                                metadata: 1,
+                                created_at: 1,
+                                campaign: 1
+                            }
+                        },
+                        { $sort: { created_at: -1 } },
+                        { $skip: skip },
+                        { $limit: limitNum }
+                    ],
+                    metadata: [
+                        { $count: "total" }
+                    ]
+                }
+            }
+        ]);
+
+        const activities = result[0].data;
+        const totalDocs = result[0].metadata[0]?.total || 0;
+        const totalPages = Math.ceil(totalDocs / limitNum);
+
+        const paginationData = {
+            docs: activities,
+            totalDocs,
+            limit: limitNum,
+            totalPages,
+            page: pageNum,
+            pagingCounter: skip + 1,
+            hasPrevPage: pageNum > 1,
+            hasNextPage: pageNum < totalPages,
+            prevPage: pageNum > 1 ? pageNum - 1 : null,
+            nextPage: pageNum < totalPages ? pageNum + 1 : null
+        };
+
+        return res.status(200).json({
+            success: true,
+            message: "User activities retrieved successfully",
+            data: paginationData
+        });
+
+    } catch (error) {
+        console.error("Error getting user activities:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Server error while retrieving activities",
+            error: error.message
+        });
+    }
+};
+
 module.exports = {
     createAds,
     getAllAds,
@@ -978,5 +1498,7 @@ module.exports = {
     getPostsAvailableForAds,
     incrementAdView,
     getAllAdsByUserId,
-    getAdsAnalytics
+    getAdsAnalytics,
+    getInteractionStats,
+    getActivitiesByUserId
 };

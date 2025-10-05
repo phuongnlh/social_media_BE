@@ -730,7 +730,7 @@ const removeGroupPostReaction = async (req, res) => {
 const getReactionsOfGroupPost = async (req, res) => {
     try {
         const { postgr_id } = req.params;
-        const reactions = await PostReaction.find({ postgr_id }).populate("user_id", "username");
+        const reactions = await PostReaction.find({ postgr_id }).populate("user_id", "username fullName");
 
         // Đếm số lượng từng loại reaction
         const counts = await PostReaction.aggregate([
@@ -770,6 +770,16 @@ const getUserReactionsForGroupPosts = async (req, res) => {
     }
 };
 
+const increaseViewCount = async (req, res) => {
+  try {
+    const postgrId = req.params.id;
+    await GroupPost.findByIdAndUpdate(postgrId, { $inc: { viewCount: 1 } });
+    res.status(200).json({ message: "View count increased" });
+  } catch (err) {
+    console.error(err);
+  }
+};
+
 module.exports = {
     createGroupPost,
     getAllPostsInGroup,
@@ -788,5 +798,6 @@ module.exports = {
     reportGroupPost,
     getReportedPostsInGroup,
     handleGroupPostReport,
-    getReportsForPost
+    getReportsForPost,
+    increaseViewCount
 };

@@ -14,13 +14,13 @@ router.post("/user-reactions", isLogin, interactController.getUserReactionsForCo
 
 // Comments of Post
 router.put("/restore/:comment_id", isLogin, interactController.restoreComment);
-router.get("/count/:postgr_id", isLogin, interactController.getGroupPostCommentCount);
+router.get("/countgr/:postgr_id", isLogin, interactController.getGroupPostCommentCount);
+router.get("/count/:post_id", isLogin, interactController.countCommentsOfPost);
 router.get("/group-post/:postgr_id", interactController.getCommentsOfPost);
 router.post("/", isLogin, upload.array("media", 1), interactController.createComment);
 router.get("/:post_id", interactController.getCommentsOfPost);
 router.put("/:comment_id", isLogin, interactController.editComment);
 router.delete("/:comment_id", isLogin, interactController.softDeleteComment);
 // Count comments of a post
-router.get("/count/:post_id", isLogin, interactController.countCommentsOfPost);
 
 module.exports = router;
