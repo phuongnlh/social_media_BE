@@ -13,6 +13,7 @@ router.patch(
 );
 
 router.get("/friends/search", isLogin, friendController.searchFriends);
+router.get("/friends/search/my-friends", isLogin, friendController.searchMyFriends);
 router.get("/friends/:userId", isLogin, friendController.getFriendsList);
 router.get(
   "/friend-requests/incoming",

@@ -20,7 +20,6 @@ const registerUser = async (req, res) => {
     if (checkUser) {
       return res.status(400).json({ message: "Email already exists." });
     }
-    const username = `${Date.now()}`;
     // Tạo mật khẩu băm và muối
     const { hash, salt } = genPwd(password);
     // Tạo người dùng mới
@@ -29,10 +28,11 @@ const registerUser = async (req, res) => {
       email,
       hash,
       salt,
-      username,
       gender,
       dateOfBirth,
     }).save();
+    newUser.username = newUser._id.toString();
+    await newUser.save();
     // Tạo token xác thực email
     const token = signToken({ id: newUser._id }, "15m");
 

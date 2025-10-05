@@ -321,6 +321,55 @@ const searchFriends = async (req, res) => {
   }
 };
 
+const searchMyFriends = async (req, res) => {
+  const userId = req.user._id;
+  const { query } = req.query;
+
+  try {
+    // Lấy danh sách các mối quan hệ đã chấp nhận
+    const myFriends = await Friendship.find({
+      status: "accepted",
+      $or: [{ user_id_1: userId }, { user_id_2: userId }],
+    });
+
+    // Lấy ra ID của những người bạn (người còn lại trong mỗi cặp)
+    const friendIds = myFriends.map((f) =>
+      f.user_id_1.toString() === userId.toString() ? f.user_id_2 : f.user_id_1
+    );
+
+    // Tìm bạn bè theo tên (nếu có query), và chỉ trong danh sách bạn bè
+    const friends = await User.find({
+      _id: { $in: friendIds },
+      ...(query ? { fullName: { $regex: query, $options: "i" } } : {}),
+    }).select("_id fullName avatar_url username bio");
+
+    // Gắn thêm thống kê: số bài viết + số bạn bè
+    const friendsWithStats = await Promise.all(
+      friends.map(async (friend) => {
+        const postsCount = await postModel.countDocuments({
+          user_id: friend._id,
+          is_deleted: false,
+        });
+
+        const friendsCount = await Friendship.countDocuments({
+          $or: [{ user_id_1: friend._id }, { user_id_2: friend._id }],
+          status: "accepted",
+        });
+
+        return {
+          ...friend.toObject(),
+          postsCount,
+          friendsCount,
+        };
+      })
+    );
+
+    res.json(friendsWithStats);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 // Lấy trạng thái quan hệ bạn bè giữa user hiện tại và profile đang xem
 const getFriendshipStatus = async (req, res) => {
   try {
@@ -376,6 +425,7 @@ module.exports = {
   sendFriendRequest,
   cancelFriendRequest,
   searchFriends,
+  searchMyFriends,
   respondFriendRequest,
   getFriendshipStatus,
   getFriendsList,
