@@ -48,6 +48,7 @@ const registerUser = async (req, res) => {
         "Registration successful! Please check your email to verify your account.",
     });
   } catch (err) {
+    console.error(err);
     return res.status(500).json({ message: "Internal server error." });
   }
 };
@@ -61,18 +62,18 @@ const verifyEmail = async (req, res) => {
     // Tìm người dùng từ ID trong token
     const user = await User.findById(payload.id);
     if (!user) {
-      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+      return res.status(404).json({ message: "User not found" });
     }
     if (user.EmailVerified) {
       return res
         .status(400)
-        .json({ message: "Email đã được xác thực trước đó" });
+        .json({ message: "Email has already been verified!" });
     }
     // Cập nhật trạng thái xác thực email
     user.EmailVerified = true;
     await user.save();
     await createPrivacyDefault(user._id);
-    res.json({ message: "Email đã được xác thực thành công" });
+    res.json({ message: "Email verified successfully!" });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
@@ -85,23 +86,19 @@ const loginUser = async (req, res) => {
     // Tìm người dùng theo email
     const user = await User.findOne({ email: email });
     if (!user) {
-      return res
-        .status(403)
-        .json({ message: "Email hoặc mật khẩu không hợp lệ!" });
+      return res.status(403).json({ message: "Email or Password invalid!" });
     }
 
     // Kiểm tra email đã được xác thực chưa
     if (!user.EmailVerified) {
       return res
         .status(403)
-        .json({ message: "Vui lòng xác thực email của bạn." });
+        .json({ message: "Please verify your email first!" });
     }
 
     // Kiểm tra mật khẩu
     if (!validatePwd(password, user.hash, user.salt)) {
-      return res
-        .status(403)
-        .json({ message: "Email hoặc mật khẩu không hợp lệ!" });
+      return res.status(403).json({ message: "Email or Password invalid!" });
     }
 
     if (user.twoFAEnabled) {
@@ -167,7 +164,7 @@ const logoutUser = async (req, res) => {
     // Xóa cookie refresh token
     res.clearCookie("refreshToken");
 
-    res.json({ message: "Đăng xuất thành công" });
+    res.json({ message: "Logout successful" });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -415,14 +412,14 @@ const uploadBackgroundProfile = async (req, res) => {
 };
 const UpdateDataProfile = async (req, res) => {
   const userId = req.user._id;
-  const { username, fullName, email, bio, phone } = req.body;
+  const { username, fullName, email, bio, phone, location } = req.body;
   if (!/^\d{10,12}$/.test(phone)) {
     return res.status(400).json({ message: "Số điện thoại không hợp lệ" });
   }
   try {
     await User.findByIdAndUpdate(
       userId,
-      { username, fullName, email, bio, phone },
+      { username, fullName, email, bio, phone, location },
       { new: true }
     );
 
