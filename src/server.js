@@ -14,9 +14,9 @@ const io = new Server(server, {
     origin: [
       "http://localhost:5173",
       "http://127.0.0.1:5173",
-      "https://dailyvibe.local",
-      "https://admin.dailyvibe.local",
-      "https://api.dailyvibe.local",
+      "https://dailyvibe.online",
+      "https://admin.dailyvibe.online",
+      "https://api.dailyvibe.online",
     ], // Allow Vite dev server
     methods: ["GET", "POST"],
     credentials: true, // Allow cookies
