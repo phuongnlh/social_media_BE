@@ -10,7 +10,7 @@ const publicKey = require("fs").readFileSync(
 const refreshAccessToken = async (req, res) => {
   const refreshToken = req.cookies.refreshToken;
   if (!refreshToken)
-    return res.status(401).json({ message: "No refresh token" });
+    return res.status(403).json({ message: "No refresh token" });
 
   try {
     const payload = jwt.verify(refreshToken, publicKey, {
@@ -31,26 +31,27 @@ const refreshAccessToken = async (req, res) => {
         .status(403)
         .json({ message: "Possible replay attack. All sessions terminated." });
     }
-    // ✅ Token hợp lệ → Xóa cái cũ
-    await redisClient.del(key);
 
     const newAccessToken = signToken({ id: payload.id }, "15m");
     const newRefreshToken = signToken({ id: payload.id }, "7d");
 
     // ✅ Lưu refresh token mới vào Redis
     const newRefreshKey = `refresh:${payload.id}:${newRefreshToken}`;
-    await redisClient.set(newRefreshKey, "true", {
+    await redisClient.set(newRefreshKey, "valid", {
       EX: 60 * 60 * 24 * 7, // 7 ngày
     });
-
+    // Thêm refresh token vào danh sách phiên của người dùng
+    const userRefreshTokensSet = `user-sessions:${payload.id}`;
+    await redisClient.sAdd(userRefreshTokensSet, newRefreshToken);
     // ✅ Gửi refresh token mới vào cookie
     res.cookie("refreshToken", newRefreshToken, {
       httpOnly: true,
-      secure: true,
-      sameSite: "Strict",
-      path: "/api/v1/refresh",
+      secure: false,
+      sameSite: "Lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
+    // ✅ Token hợp lệ → Xóa cái cũ
+    await redisClient.del(key);
 
     res.status(200).json({ accessToken: newAccessToken });
   } catch (err) {

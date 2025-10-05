@@ -8,7 +8,7 @@ const postSchema = new mongoose.Schema(
       required: true,
     },
     content: { type: String },
-    type: { type: String, enum: ["Public", "Private"], default: "Public" },
+    type: { type: String, enum: ["Public", "Private", "Friends"], default: "Public" },
     is_deleted: { type: Boolean, default: false },
     deleted_at: { type: Date, default: null },
     shared_post_id: { // Share pót 
@@ -16,6 +16,7 @@ const postSchema = new mongoose.Schema(
       ref: "Post",
       default: null
     },
+    viewCount: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

@@ -2,7 +2,15 @@ const Post = require("../models/post.model");
 const Media = require("../models/media.model");
 const PostMedia = require("../models/postMedia.model");
 const PostReaction = require("../models/Comment_Reaction/post_reaction.model");
+const adsModel = require("../models/Payment_Ads/ads.model");
+const userModel = require("../models/user.model");
+const Friendship = require("../models/friendship.model");
+const Comment = require("../models/Comment_Reaction/comment.model");
+const Activity = require("../models/Payment_Ads/activity-ads.model");
 const mongoose = require("mongoose");
+const notificationService = require("../services/notification.service");
+const { getSocketIO, getUserSocketMap } = require("../socket/io-instance");
+const moderationService = require("../queues/moderationQueue");
 
 // Tạo bài đăng mới với tệp media (nếu có)
 const createPost = async (req, res) => {
@@ -11,7 +19,7 @@ const createPost = async (req, res) => {
     const userId = req.user._id;
 
     // Tạo bài đăng mới trong cơ sở dữ liệu
-    const post = await Post.create({ content, user_id: userId, type });
+    let post = await Post.create({ content, user_id: userId, type });
 
     // Xử lý tải lên các tệp media
     const files = req.files || [];
@@ -30,11 +38,54 @@ const createPost = async (req, res) => {
       await PostMedia.create({
         type: "post",
         post_id: post._id,
-        media_id: mediaIds
+        media_id: mediaIds,
       });
     }
 
-    res.status(201).json({ message: "Post created", postId: post._id });
+    const getMedia = await PostMedia.findOne({ post_id: post._id }).populate(
+      "media_id"
+    );
+    if (getMedia && getMedia.media_id.length > 0) {
+      if (getMedia.media_id.length === 1) {
+        // Single image - use existing job
+        await moderationService.checkSinglePostImage(
+          post._id,
+          getMedia.media_id[0].url,
+          getMedia.media_id[0].media_type
+        );
+      } else {
+        // Multiple images - use new job
+        await moderationService.checkPostWithMultipleImages(
+          post._id,
+          getMedia.media_id.map((m) => ({
+            url: m.url,
+            mediaType: m.media_type,
+          }))
+        );
+        console.log(`Multiple images moderation queued for post ${post._id}`);
+      }
+    }
+    post = async (post) => {
+      // Media cho post chính
+      const postMedia = await PostMedia.findOne({
+        post_id: post._id,
+      }).populate("media_id");
+      let media = [];
+      if (postMedia?.media_id?.length > 0) {
+        media = postMedia.media_id.map((m) => ({
+          url: m.url,
+          type: m.media_type,
+        }));
+      }
+
+      return {
+        ...post,
+        author: post.user_id,
+        media,
+      };
+    };
+
+    res.status(201).json({ message: "Post created", post });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -45,15 +96,17 @@ const getAllPostsbyUser = async (req, res) => {
   try {
     const userId = req.user._id;
     // Tìm tất cả bài đăng không bị xóa của người dùng, sắp xếp theo thời gian giảm dần
-    const posts = await Post.find({ user_id: userId, isDeleted: false })
-      .sort({ created_at: -1 })
+    const posts = await Post.find({ user_id: userId, is_deleted: false })
+      .sort({ createdAt: -1 })
+      .populate("user_id", "username avatar_url fullName") // Nạp thông tin người dùng
       .lean();
-
     // Nạp thông tin media cho mỗi bài đăng
     const populatedPosts = await Promise.all(
       posts.map(async (post) => {
         // Lấy 1 document PostMedia cho mỗi post
-        const postMedia = await PostMedia.findOne({ post_id: post._id }).populate("media_id");
+        const postMedia = await PostMedia.findOne({
+          post_id: post._id,
+        }).populate("media_id");
         let media = [];
         if (postMedia && postMedia.media_id && postMedia.media_id.length > 0) {
           media = postMedia.media_id.map((m) => ({
@@ -61,13 +114,15 @@ const getAllPostsbyUser = async (req, res) => {
             type: m.media_type,
           }));
         }
+        const { user_id, ...rest } = post;
+
         return {
-          ...post,
+          ...rest,
+          author: user_id, // Rename user_id => author
           media,
         };
       })
     );
-
     res.json(populatedPosts);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -79,38 +134,86 @@ const getPostById = async (req, res) => {
   try {
     const postId = req.params.id;
     const userId = req.user._id;
-    // Tìm bài đăng theo ID
-    const post = await Post.findById(postId).lean();
 
-    if (!post) return res.status(404).json({ message: "Không tìm thấy bài đăng" });
-    
+    // Tìm bài đăng theo ID
+    const post = await Post.findById(postId)
+      .populate("user_id", "username avatar_url fullName")
+      .populate({
+        path: "shared_post_id",
+        populate: { path: "user_id", select: "username avatar_url fullName" },
+      })
+      .lean();
+
+    if (!post)
+      return res.status(404).json({ message: "Không tìm thấy bài đăng" });
+
     // Kiểm tra nếu bài đăng đã bị xóa và người yêu cầu không phải tác giả
-    if (post.isDeleted && post.user_id.toString() !== userId.toString()) {
+    if (post.isDeleted && post.user_id._id.toString() !== userId.toString()) {
       return res.status(410).json({ message: "Bài đăng đã bị xóa" });
     }
-    
+
     // Kiểm tra quyền truy cập nếu bài đăng ở chế độ riêng tư
     if (
       post.type === "Private" &&
-      post.user_id.toString() !== userId.toString()
+      post.user_id._id.toString() !== userId.toString()
     ) {
       return res.status(403).json({ message: "Không có quyền truy cập" });
     }
 
-    // Lấy 1 document PostMedia cho post này
-    const postMedia = await PostMedia.findOne({ post_id: post._id }).populate("media_id");
+    // Lấy media cho post chính
+    const postMedia = await PostMedia.findOne({ post_id: post._id }).populate(
+      "media_id"
+    );
     let media = [];
-    if (postMedia && postMedia.media_id && postMedia.media_id.length > 0) {
+    if (postMedia?.media_id?.length > 0) {
       media = postMedia.media_id.map((m) => ({
         url: m.url,
         type: m.media_type,
       }));
     }
+
+    // Nếu có shared_post thì lấy media cho shared_post
+    let sharedPost = null;
+    if (post.shared_post_id) {
+      const sharedPostMedia = await PostMedia.findOne({
+        post_id: post.shared_post_id._id,
+      }).populate("media_id");
+
+      let sharedMedia = [];
+      if (sharedPostMedia?.media_id?.length > 0) {
+        sharedMedia = sharedPostMedia.media_id.map((m) => ({
+          url: m.url,
+          type: m.media_type,
+        }));
+      }
+
+      sharedPost = {
+        ...post.shared_post_id,
+        media: sharedMedia,
+      };
+    }
+
+    // Tính reactionCount và commentCount
+    const [reactions, comments] = await Promise.all([
+      PostReaction.find({ post_id: post._id }).lean(),
+      Comment.find({ post_id: post._id, isDeleted: false }).lean(),
+    ]);
+
+    const reactionCount = reactions.length;
+    const commentCount = comments.length;
+
+    // Trả về object cuối cùng
+    const { user_id, shared_post_id, ...rest } = post;
     res.json({
-      ...post,
+      ...rest,
+      author: user_id,
+      shared_post_id: sharedPost,
       media,
+      reactionCount,
+      commentCount,
     });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -125,9 +228,9 @@ const updatePost = async (req, res) => {
     // Tìm bài đăng và xác minh quyền sở hữu
     const post = await Post.findOne({ _id: postId, user_id: userId });
     if (!post)
-      return res
-        .status(404)
-        .json({ message: "Không tìm thấy bài đăng hoặc không có quyền chỉnh sửa" });
+      return res.status(404).json({
+        message: "Không tìm thấy bài đăng hoặc không có quyền chỉnh sửa",
+      });
 
     // Cập nhật nội dung và thời gian cập nhật
     post.content = content || post.content;
@@ -151,20 +254,33 @@ const softDeletePost = async (req, res) => {
     const post = await Post.findOne({
       _id: postId,
       user_id: userId,
-      isDeleted: false,
+      is_deleted: false,
     });
     if (!post)
       return res
         .status(404)
         .json({ message: "Không tìm thấy bài đăng hoặc đã bị xóa" });
 
+    // Kiểm tra xem bài đăng có quảng cáo đang hoạt động không
+    const activeAds = await adsModel.find({
+      post_id: postId,
+      status: { $in: ["active", "paused", "waiting_payment"] }
+    });
+    if (activeAds.length > 0) {
+      return res.status(400).json({
+        message: "Không thể xóa bài đăng này vì đang có quảng cáo hoạt động. Vui lòng dừng hoặc hủy quảng cáo trước khi xóa bài đăng.",
+        hasActiveAds: true,
+      });
+    }
+
     // Đánh dấu bài đăng đã bị xóa và lưu thời gian xóa
-    post.isDeleted = true;
+    post.is_deleted = true;
     post.deleted_at = new Date();
     await post.save();
 
-    res.json({
-      message: "Bài đăng đã được chuyển vào thùng rác. Sẽ bị xóa vĩnh viễn sau 7 ngày.",
+    res.status(200).json({
+      message:
+        "Bài đăng đã được chuyển vào thùng rác. Sẽ bị xóa vĩnh viễn sau 7 ngày.",
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -184,9 +300,9 @@ const restorePost = async (req, res) => {
       isDeleted: true,
     });
     if (!post)
-      return res
-        .status(404)
-        .json({ message: "Không tìm thấy bài đăng hoặc không nằm trong thùng rác" });
+      return res.status(404).json({
+        message: "Không tìm thấy bài đăng hoặc không nằm trong thùng rác",
+      });
 
     // Kiểm tra xem bài đăng có quá hạn khôi phục không (7 ngày)
     const now = new Date();
@@ -242,7 +358,9 @@ const sharePost = async (req, res) => {
     // Kiểm tra bài gốc có tồn tại không
     const originalPost = await Post.findById(original_post_id);
     if (!originalPost || originalPost.is_deleted) {
-      return res.status(404).json({ message: "Original post not found or deleted" });
+      return res
+        .status(404)
+        .json({ message: "Original post not found or deleted" });
     }
 
     // Không cho share bài đã share
@@ -258,7 +376,9 @@ const sharePost = async (req, res) => {
       shared_post_id: original_post_id,
     });
 
-    res.status(201).json({ message: "Post shared successfully", postId: sharedPost._id });
+    res
+      .status(201)
+      .json({ message: "Post shared successfully", postId: sharedPost._id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -273,12 +393,75 @@ const reactToPost = async (req, res) => {
 
     if (!type) type = "like"; // Mặc định là "like" nếu không có type
 
+    // Kiểm tra xem user đã react post này chưa
+    const existingReaction = await PostReaction.findOne({ user_id, post_id });
+    const isNewReaction = !existingReaction;
+
     const reaction = await PostReaction.findOneAndUpdate(
       { user_id, post_id },
       { type },
-      { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true }
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+        runValidators: true,
+      }
     );
 
+    // Chỉ tăng total_interactions nếu là reaction mới (chưa từng react)
+    if (isNewReaction) {
+      await adsModel.updateOne(
+        { post_id: post_id, status: "active" },
+        [
+          {
+            $set: {
+              total_interactions: { $add: ["$total_interactions", 1] }
+            }
+          }
+        ]
+      );
+    }
+
+    // Gửi thông báo cho chủ post
+    try {
+      const post = await Post.findById(post_id);
+      if (post && post.user_id.toString() !== user_id.toString()) {
+        // Lấy danh sách user đã react (trừ chủ post)
+        const reactions = await PostReaction.find({ post_id }).populate(
+          "user_id",
+          "username fullName"
+        );
+        const otherReactUsers = reactions.filter(
+          (r) =>
+            r.user_id && r.user_id._id.toString() !== post.user_id.toString()
+        );
+        if (otherReactUsers.length > 0) {
+          const currentUser = otherReactUsers.find(
+            (r) => r.user_id._id.toString() === user_id.toString()
+          );
+          const otherCount = otherReactUsers.length - 1;
+          let contentNoti = "";
+          if (otherCount > 0) {
+            contentNoti = `${currentUser.user_id.fullName || currentUser.user_id.username
+              } và ${otherCount} người khác đã bày tỏ cảm xúc bài viết của bạn.`;
+          } else {
+            contentNoti = `${currentUser.user_id.fullName || currentUser.user_id.username
+              } đã bày tỏ cảm xúc bài viết của bạn.`;
+          }
+          const io = getSocketIO();
+          const userSocketMap = getUserSocketMap();
+          await notificationService.createNotification(
+            io,
+            post.user_id,
+            "post_reaction",
+            contentNoti,
+            userSocketMap
+          );
+        }
+      }
+    } catch (notifyErr) {
+      console.error("Không thể gửi thông báo reaction bài viết:", notifyErr);
+    }
     res.status(201).json({ message: "Reaction saved", reaction });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -291,7 +474,24 @@ const removeReaction = async (req, res) => {
     const { post_id } = req.body;
     const user_id = req.user._id;
 
-    await PostReaction.findOneAndDelete({ user_id, post_id });
+    // Xóa reaction
+    const deletedReaction = await PostReaction.findOneAndDelete({ user_id, post_id });
+
+    // Chỉ giảm counter nếu thực sự có reaction bị xóa
+    if (deletedReaction) {
+      await adsModel.updateOne(
+        { post_id: post_id, status: "active" },
+        [
+          {
+            $set: {
+              total_interactions: {
+                $max: [{ $subtract: ["$total_interactions", 1] }, 0]
+              }
+            }
+          }
+        ]
+      );
+    }
 
     res.status(200).json({ message: "Reaction removed" });
   } catch (err) {
@@ -303,14 +503,16 @@ const removeReaction = async (req, res) => {
 const getReactionsOfPost = async (req, res) => {
   try {
     const { post_id } = req.params;
-    const reactions = await PostReaction.find({ post_id }).populate("user_id", "username"); //Thêm vào các trường tương ứng nếu cần thiết
+    const reactions = await PostReaction.find({ post_id }).populate(
+      "user_id",
+      "fullName avatar_url"
+    ); //Thêm vào các trường tương ứng nếu cần thiết
 
     //Đếm
     const counts = await PostReaction.aggregate([
       { $match: { post_id: new mongoose.Types.ObjectId(post_id) } },
-      { $group: { _id: "$type", count: { $sum: 1 } } }
+      { $group: { _id: "$type", count: { $sum: 1 } } },
     ]);
-
 
     res.status(200).json({ reactions, counts });
   } catch (err) {
@@ -322,27 +524,603 @@ const getReactionsOfPost = async (req, res) => {
 // Dùng cho trường hợp render để hiển thị trạng thái nút tương tác
 const getUserReactionsForPosts = async (req, res) => {
   try {
-    const { post_ids } = req.body;
+    const { post_id } = req.body;
     const user_id = req.user._id;
 
-    if (!Array.isArray(post_ids) || post_ids.length === 0) {
-      return res.status(400).json({ error: "post_ids must be a non-empty array" });
-    }
-
-
-    const reactions = await PostReaction.find({
-      post_id: { $in: post_ids },
-      user_id
+    const reactions = await PostReaction.findOne({
+      post_id,
+      user_id,
     });
 
-    const result = {};
-    reactions.forEach(r => {
-      result[r.post_id.toString()] = r.type;
-    });
-
-    res.status(200).json({ reactions: result });
+    res.status(200).json(reactions);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+};
+
+// Lấy tất cả bài đăng của người dùng đang đăng nhập
+const getRecommendPost = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const user = await userModel.findById(userId).lean();
+    const location = req.userLocation;
+
+    // Pagination params
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    // 1. Lấy danh sách bạn bè
+    const friendships = await Friendship.find({
+      $or: [{ user_id_1: userId }, { user_id_2: userId }],
+      status: "accepted",
+    }).lean();
+
+    const friendIds = friendships.map((f) =>
+      f.user_id_1.toString() === userId.toString() ? f.user_id_2 : f.user_id_1
+    );
+
+    // 2. Lấy quảng cáo active
+    const postAds = await adsModel
+      .find({ status: "active" })
+      .select("post_id target_location target_age target_gender")
+      .lean();
+
+    // 3. Lấy tất cả post (chỉ match, chưa phân trang)
+    const posts = await Post.aggregate([
+      {
+        $match: {
+          is_deleted: false,
+          $or: [
+            { type: "Public" },
+            { type: "Friends", user_id: { $in: [...friendIds, userId] } },
+          ],
+        },
+      },
+      {
+        $lookup: {
+          from: "postreactions",
+          localField: "_id",
+          foreignField: "post_id",
+          as: "reactions",
+        },
+      },
+      {
+        $lookup: {
+          from: "comments",
+          let: { postId: "$_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ["$post_id", "$$postId"] },
+                isDeleted: false, // chỉ lấy comment chưa xóa
+              },
+            },
+          ],
+          as: "comments",
+        },
+      },
+      {
+        $lookup: {
+          from: "posts",
+          let: { postId: "$_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ["$shared_post_id", "$$postId"] },
+                is_deleted: false,
+              },
+            },
+            { $count: "count" }, // chỉ đếm thôi
+          ],
+          as: "shares_count",
+        },
+      },
+      {
+        $addFields: {
+          reactionCount: { $size: "$reactions" },
+          commentCount: { $size: "$comments" },
+          shares_count: {
+            $ifNull: [{ $arrayElemAt: ["$shares_count.count", 0] }, 0],
+          },
+        },
+      },
+    ]);
+
+    // 4. Populate author & shared_post_id
+    const populatedPosts = await Post.populate(posts, [
+      {
+        path: "user_id",
+        select: "username avatar_url fullName",
+      },
+      {
+        path: "shared_post_id",
+        populate: {
+          path: "user_id",
+          select: "username avatar_url fullName",
+        },
+      },
+    ]);
+
+    // 5. Populate media
+    const postsWithMedia = await Promise.all(
+      populatedPosts.map(async (post) => {
+        // Media cho post chính
+        const postMedia = await PostMedia.findOne({
+          post_id: post._id,
+        }).populate("media_id");
+        let media = [];
+        if (postMedia?.media_id?.length > 0) {
+          media = postMedia.media_id.map((m) => ({
+            url: m.url,
+            type: m.media_type,
+          }));
+        }
+
+        // Nếu có shared_post thì thêm media trực tiếp vào object đó
+        let sharedPost = null;
+        if (post.shared_post_id) {
+          const sharedPostMedia = await PostMedia.findOne({
+            post_id: post.shared_post_id._id,
+          }).populate("media_id");
+          let sharedMedia = [];
+          if (sharedPostMedia?.media_id?.length > 0) {
+            sharedMedia = sharedPostMedia.media_id.map((m) => ({
+              url: m.url,
+              type: m.media_type,
+            }));
+          }
+
+          // clone object mongoose sang plain object + gắn media vào trong
+          sharedPost = {
+            ...post.shared_post_id.toObject(),
+            media: sharedMedia,
+          };
+        }
+
+        return {
+          ...post,
+          author: post.user_id,
+          media, // media của post chính
+          shared_post_id: sharedPost, // shared_post có media nằm trong luôn
+        };
+      })
+    );
+
+    // 6. Lấy tương tác user để ưu tiên
+    const reactions = await PostReaction.find({ user_id: userId }).lean();
+    const reactedPostIds = reactions.map((r) => r.post_id?.toString());
+
+    const comments = await Comment.find({
+      user_id: userId,
+      isDeleted: false,
+    }).lean();
+    const commentedPostIds = comments.map((c) => c.post_id?.toString());
+
+    // 7. Hàm tính score
+    function calculateScore(post, user, reactedPostIds, commentedPostIds) {
+      let score = 0;
+      let isAd = false;
+
+      const ageInHours = (Date.now() - new Date(post.createdAt)) / 3600000;
+
+      // Recency
+      score += Math.max(0, 50 - ageInHours);
+
+      // User interactions
+      if (reactedPostIds.includes(post._id.toString())) score += 25;
+      if (commentedPostIds.includes(post._id.toString())) score += 35;
+
+      // Social factors
+      score += (post.reactionCount || 0) * 1;
+      score += (post.commentCount || 0) * 2;
+      score += Math.floor((post.viewCount || 0) / 10);
+
+      // Ads targeting
+      const ad = postAds.find(
+        (a) => a.post_id.toString() === post._id.toString()
+      );
+      if (ad) {
+        isAd = true; // luôn đánh dấu là ads
+
+        if (ad.target_gender.includes(user.gender)) {
+          score += 50;
+        }
+
+        if (user.age >= ad.target_age.min) {
+          score += 50;
+        }
+
+        if (user.age <= ad.target_age.max) {
+          score += 50;
+        }
+
+        if (ad.target_location.includes(user.location)) {
+          score += 50;
+        }
+      }
+
+      return { score, isAd };
+    }
+
+    // 8. Tính score và sort tất cả
+    const scoredPosts = postsWithMedia.map((post) => {
+      const { score, isAd } = calculateScore(
+        post,
+        user,
+        reactedPostIds,
+        commentedPostIds
+      );
+      return {
+        ...post,
+        score,
+        isAd,
+      };
+    });
+
+    scoredPosts.sort((a, b) => b.score - a.score);
+
+    // 9. Slice theo page
+    const paginatedPosts = scoredPosts.slice(skip, skip + limit);
+
+    res.json({
+      page,
+      limit,
+      total: scoredPosts.length,
+      totalPages: Math.ceil(scoredPosts.length / limit),
+      posts: paginatedPosts,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+const getAllPostsbyUserId = async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    const { media_only } = req.query; // Tham số query để lọc posts có media
+
+    // Tìm tất cả bài đăng không bị xóa của người dùng, sắp xếp theo thời gian giảm dần
+    const posts = await Post.find({ user_id: userId, is_deleted: false })
+      .sort({ createdAt: -1 })
+      .populate("user_id", "username avatar_url fullName") // Nạp thông tin người dùng
+      .lean();
+
+    // Nạp thông tin media cho mỗi bài đăng
+    const populatedPosts = await Post.populate(posts, [
+      {
+        path: "user_id",
+        select: "username avatar_url fullName",
+      },
+      {
+        path: "shared_post_id",
+        populate: {
+          path: "user_id",
+          select: "username avatar_url fullName",
+        },
+      },
+    ]);
+
+    // 5. Populate media
+    const postsWithMedia = await Promise.all(
+      populatedPosts.map(async (post) => {
+        // Media cho post chính
+        const postMedia = await PostMedia.findOne({
+          post_id: post._id,
+        }).populate("media_id");
+        let media = [];
+        if (postMedia?.media_id?.length > 0) {
+          media = postMedia.media_id.map((m) => ({
+            url: m.url,
+            type: m.media_type,
+          }));
+        }
+
+        // Nếu có shared_post thì thêm media trực tiếp vào object đó
+        let sharedPost = null;
+        if (post.shared_post_id) {
+          const sharedPostMedia = await PostMedia.findOne({
+            post_id: post.shared_post_id._id,
+          }).populate("media_id");
+
+          let sharedMedia = [];
+          if (sharedPostMedia?.media_id?.length > 0) {
+            sharedMedia = sharedPostMedia.media_id.map((m) => ({
+              url: m.url,
+              type: m.media_type,
+            }));
+          }
+
+          // clone object mongoose sang plain object + gắn media vào trong
+          sharedPost = {
+            ...post.shared_post_id.toObject(),
+            media: sharedMedia,
+          };
+        }
+
+        return {
+          ...post,
+          author: post.user_id,
+          media, // media của post chính
+          shared_post_id: sharedPost, // shared_post có media nằm trong luôn
+        };
+      })
+    );
+
+    // Lọc posts có media nếu media_only được truyền vào
+    let filteredPosts = postsWithMedia;
+    if (media_only && (media_only === "true" || media_only === "1")) {
+      filteredPosts = postsWithMedia.filter(
+        (post) => post.media && post.media.length > 0
+      );
+    }
+
+    res.json(filteredPosts);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+const searchPost = async (req, res) => {
+  try {
+    const { query } = req.query;
+    const userId = req.user._id;
+
+    // 1. Lấy danh sách bạn bè
+    const friendships = await Friendship.find({
+      $or: [{ user_id_1: userId }, { user_id_2: userId }],
+      status: "accepted",
+    }).lean();
+
+    const friendIds = friendships.map((f) =>
+      f.user_id_1.toString() === userId.toString() ? f.user_id_2 : f.user_id_1
+    );
+
+    // 2. Tìm post theo content, kèm điều kiện công khai/bạn bè
+    const posts = await Post.aggregate([
+      {
+        $match: {
+          content: { $regex: query, $options: "i" },
+          is_deleted: false,
+          $or: [
+            { type: "Public" },
+            { type: "Friends", user_id: { $in: [...friendIds, userId] } },
+          ],
+        },
+      },
+      {
+        $lookup: {
+          from: "postreactions",
+          localField: "_id",
+          foreignField: "post_id",
+          as: "reactions",
+        },
+      },
+      {
+        $lookup: {
+          from: "comments",
+          let: { postId: "$_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ["$post_id", "$$postId"] },
+                isDeleted: false,
+              },
+            },
+          ],
+          as: "comments",
+        },
+      },
+      {
+        $lookup: {
+          from: "posts",
+          let: { postId: "$_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ["$shared_post_id", "$$postId"] },
+                is_deleted: false,
+              },
+            },
+            { $count: "count" },
+          ],
+          as: "shares_count",
+        },
+      },
+      {
+        $addFields: {
+          reactionCount: { $size: "$reactions" },
+          commentCount: { $size: "$comments" },
+          shares_count: {
+            $ifNull: [{ $arrayElemAt: ["$shares_count.count", 0] }, 0],
+          },
+        },
+      },
+      { $sort: { createdAt: -1 } }, // vẫn sort theo mới nhất
+    ]);
+
+    // 3. Populate author & shared_post
+    const populatedPosts = await Post.populate(posts, [
+      {
+        path: "user_id",
+        select: "username avatar_url fullName",
+      },
+      {
+        path: "shared_post_id",
+        populate: {
+          path: "user_id",
+          select: "username avatar_url fullName",
+        },
+      },
+    ]);
+
+    // 4. Gắn media
+    const postsWithMedia = await Promise.all(
+      populatedPosts.map(async (post) => {
+        const postMedia = await PostMedia.findOne({
+          post_id: post._id,
+        }).populate("media_id");
+
+        let media = [];
+        if (postMedia?.media_id?.length > 0) {
+          media = postMedia.media_id.map((m) => ({
+            url: m.url,
+            type: m.media_type,
+          }));
+        }
+
+        let sharedPost = null;
+        if (post.shared_post_id) {
+          const sharedPostMedia = await PostMedia.findOne({
+            post_id: post.shared_post_id._id,
+          }).populate("media_id");
+
+          let sharedMedia = [];
+          if (sharedPostMedia?.media_id?.length > 0) {
+            sharedMedia = sharedPostMedia.media_id.map((m) => ({
+              url: m.url,
+              type: m.media_type,
+            }));
+          }
+
+          sharedPost = {
+            ...post.shared_post_id.toObject(),
+            media: sharedMedia,
+          };
+        }
+
+        return {
+          ...post,
+          author: post.user_id,
+          media,
+          shared_post_id: sharedPost,
+        };
+      })
+    );
+
+    res.json(postsWithMedia);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Helper function to create progress activities
+const createProgressActivities = async (ads, oldViews, newViews) => {
+  const oldProgress = (oldViews / ads.target_views) * 100;
+  const newProgress = (newViews / ads.target_views) * 100;
+  
+  const milestones = [
+    { percent: 25, type: 'progress_25' },
+    { percent: 50, type: 'progress_50' },
+    { percent: 75, type: 'progress_75' }
+  ];
+  
+  for (const milestone of milestones) {
+    if (oldProgress < milestone.percent && newProgress >= milestone.percent) {
+      await Activity.create({
+        user_id: ads.user_id,
+        ads_id: ads._id,
+        type: milestone.type,
+        metadata: {
+          campaign_name: ads.campaign_name,
+          progress_percent: milestone.percent,
+          views_count: newViews
+        }
+      });
+    }
+  }
+};
+
+const increaseViewCount = async (req, res) => {
+  try {
+    const postId = req.params.id;
+    
+    // Lấy thông tin ads trước khi update (để so sánh progress)
+    const adsBeforeUpdate = await adsModel.findOne({ 
+      post_id: postId, 
+      status: "active" 
+    });
+    
+    // Tăng view count của Post
+    await Post.findByIdAndUpdate(postId, { $inc: { viewCount: 1 } });
+    
+    // Cập nhật Ads với atomic operation
+    const updateResult = await adsModel.updateOne(
+      { 
+        post_id: postId, 
+        status: "active" 
+      },
+      [
+        {
+          $set: {
+            current_views: {
+              $min: [
+                { $add: ["$current_views", 1] },
+                "$target_views"
+              ]
+            },
+            status: {
+              $cond: {
+                if: { 
+                  $gte: [
+                    { $add: ["$current_views", 1] }, 
+                    "$target_views"
+                  ] 
+                },
+                then: "completed",
+                else: "active"
+              }
+            },
+            completed_at: {
+              $cond: {
+                if: { 
+                  $gte: [
+                    { $add: ["$current_views", 1] }, 
+                    "$target_views"
+                  ] 
+                },
+                then: new Date(),
+                else: "$completed_at"
+              }
+            }
+          }
+        }
+      ]
+    );
+    
+    // Tạo activities nếu có ads được update
+    if (updateResult.modifiedCount > 0 && adsBeforeUpdate) {
+      const adsAfterUpdate = await adsModel.findById(adsBeforeUpdate._id);
+      
+      // Tạo progress activities (25%, 50%, 75%)
+      await createProgressActivities(
+        adsAfterUpdate, 
+        adsBeforeUpdate.current_views, 
+        adsAfterUpdate.current_views
+      );
+      
+      // Tạo completed activity
+      if (adsAfterUpdate.status === 'completed' && adsBeforeUpdate.status === 'active') {
+        await Activity.create({
+          user_id: adsAfterUpdate.user_id,
+          ads_id: adsAfterUpdate._id,
+          type: 'campaign_completed',
+          metadata: {
+            campaign_name: adsAfterUpdate.campaign_name,
+            views_count: adsAfterUpdate.current_views
+          }
+        });
+      }
+    }
+    
+    res.status(200).json({ message: "View count increased" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ 
+      success: false,
+      message: "Failed to increase view count",
+      error: err.message 
+    });
   }
 };
 
@@ -358,5 +1136,9 @@ module.exports = {
   removeReaction,
   getReactionsOfPost,
   getUserReactionsForPosts,
-  sharePost
+  sharePost,
+  getRecommendPost,
+  getAllPostsbyUserId,
+  searchPost,
+  increaseViewCount,
 };

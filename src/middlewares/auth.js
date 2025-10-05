@@ -1,4 +1,4 @@
-const passport = require("../config/passport")
+const passport = require("../config/passport");
 const redisClient = require("../config/database.redis");
 
 const authenticate = () => async (req, res, next) => {
@@ -31,6 +31,18 @@ const authenticate = () => async (req, res, next) => {
   })(req, res, next);
 };
 
+const isAdmin = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  if (req.user.role !== "admin" && req.user.role !== "super_admin") {
+    return res.status(403).json({ message: "You are not an admin" });
+  }
+
+  next();
+};
+
 const isLogin = authenticate();
 
-module.exports = { isLogin };
+module.exports = { isLogin, isAdmin };

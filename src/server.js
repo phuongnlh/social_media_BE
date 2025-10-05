@@ -1,4 +1,5 @@
 require("dotenv").config();
+require("./workers/moderationWorker");
 const http = require("http");
 const { Server } = require("socket.io");
 
@@ -8,24 +9,28 @@ const redisClient = require("./config/database.redis");
 
 // Tạo HTTP server từ app Express
 const server = http.createServer(app);
-
-// Tạo socket server
 const io = new Server(server, {
   cors: {
-    origin: "*", // Hoặc domain FE bạn dùng
+    origin: [
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      "https://dailyvibe.local",
+      "https://admin.dailyvibe.local",
+      "https://api.dailyvibe.local",
+    ], // Allow Vite dev server
     methods: ["GET", "POST"],
+    credentials: true, // Allow cookies
   },
+  maxHttpBufferSize: 1e8,
 });
 
-// Import logic Socket.IO (nếu có)
-require("./socket")(io); // bạn có thể tạo file socket/index.js để gọn
-
+require("./socket")(io);
 (async () => {
   try {
     await connDB();
 
     const PORT = process.env.PORT || 3000;
-    server.listen(PORT, () => {
+    server.listen(PORT, "0.0.0.0", () => {
       console.log(`✅ Server is running on http://localhost:${PORT}`);
     });
   } catch (err) {

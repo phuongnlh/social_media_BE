@@ -7,6 +7,7 @@ const redisClient = redis.createClient({
   socket: {
     host: process.env.REDIS_HOST,
     port: process.env.REDIS_PORT,
+    connectTimeout: 10000,
   },
 });
 
@@ -18,3 +19,10 @@ redisClient.on("error", (err) => console.error("Redis Client Error", err));
 })();
 
 module.exports = redisClient;
+
+module.exports.redisConfig = {
+  username: process.env.REDIS_USERNAME,
+  password: process.env.REDIS_PASSWORD,
+  host: process.env.REDIS_HOST,
+  port: Number(process.env.REDIS_PORT),
+};
