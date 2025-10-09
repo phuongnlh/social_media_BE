@@ -13,7 +13,6 @@ const http = require("http");
 
 const app = express();
 const server = http.createServer(app);
-
 // CORS configuration for HTTP requests
 app.use(
   cors({
@@ -23,6 +22,9 @@ app.use(
       "https://dailyvibe.online",
       "https://admin.dailyvibe.online",
       "https://api.dailyvibe.online",
+      "https://dailyvibe.local",
+      "https://admin.dailyvibe.local",
+      "https://api.dailyvibe.local",
     ],
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: [
@@ -35,7 +37,10 @@ app.use(
     credentials: true, // Allow cookies and authorization headers
   })
 );
-app.use('/api/v1/payment/stripe/webhook', express.raw({type: 'application/json'}));
+app.use(
+  "/api/v1/payment/stripe/webhook",
+  express.raw({ type: "application/json" })
+);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

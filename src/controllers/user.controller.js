@@ -79,6 +79,48 @@ const verifyEmail = async (req, res) => {
   }
 };
 
+// Gửi lại email xác thực
+const resendVerification = async (req, res) => {
+  const { email } = req.body;
+  try {
+    // Find user by email
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Email not found in the system",
+      });
+    }
+
+    if (user.EmailVerified) {
+      return res.status(400).json({
+        success: false,
+        message: "Email has already been verified",
+      });
+    }
+
+    // Generate new verification token
+    const token = signToken({ id: user._id }, "15m");
+
+    // Send verification email
+    const result = await sendVerificationEmail(email, token);
+    if (!result) {
+      await User.findByIdAndDelete(user._id);
+      throw new Error("Failed to send verification email.");
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Email verification has been sent",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "An error occurred while sending email",
+    });
+  }
+};
+
 // Đăng nhập người dùng
 const loginUser = async (req, res) => {
   try {
@@ -91,14 +133,18 @@ const loginUser = async (req, res) => {
 
     // Kiểm tra email đã được xác thực chưa
     if (!user.EmailVerified) {
-      return res
-        .status(403)
-        .json({ message: "Please verify your email first!" });
+      return res.status(200).json({
+        EmailVerified: false,
+        email: user.email,
+        message: "Please verify your email to continue!",
+      });
     }
 
     // Kiểm tra mật khẩu
     if (!validatePwd(password, user.hash, user.salt)) {
-      return res.status(403).json({ message: "Email or Password invalid!" });
+      return res
+        .status(403)
+        .json({ success: false, message: "Email or Password invalid!" });
     }
 
     if (user.twoFAEnabled) {
@@ -412,19 +458,28 @@ const uploadBackgroundProfile = async (req, res) => {
 };
 const UpdateDataProfile = async (req, res) => {
   const userId = req.user._id;
-  const { username, fullName, email, bio, phone, location } = req.body;
+  const { username, fullName, email, bio, phone, location, gender } = req.body;
   if (!/^\d{10,12}$/.test(phone)) {
     return res.status(400).json({ message: "Số điện thoại không hợp lệ" });
   }
   try {
     await User.findByIdAndUpdate(
       userId,
-      { username, fullName, email, bio, phone, location },
+      { username, fullName, email, bio, phone, location, gender },
       { new: true }
     );
 
     res.status(200).json({
       message: "Cập nhật thông tin cá nhân thành công",
+      data: {
+        username,
+        fullName,
+        email,
+        bio,
+        phone,
+        location,
+        gender,
+      },
     });
   } catch (error) {
     console.error("Lỗi cập nhật thông tin cá nhân:", error);
@@ -785,6 +840,7 @@ const disableTwoFA = async (req, res) => {
 module.exports = {
   registerUser,
   verifyEmail,
+  resendVerification,
   loginUser,
   logoutUser,
   logoutAllUser,
