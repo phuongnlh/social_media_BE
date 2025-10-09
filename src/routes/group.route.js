@@ -6,6 +6,7 @@ const groupController = require("../controllers/group.controller");
 const { isLogin } = require("../middlewares/auth");
 
 router.post("/", isLogin, uploadGroup.array("media", 1), groupController.createGroup); // Tạo group mới
+router.get("/search", isLogin, groupController.searchGroups); // Tìm kiếm nhóm
 router.get("/get-groups-by-id/:user_id", isLogin, groupController.getUserGroups); // Lấy danh sách group đã tham gia theo user_id
 router.get("/my-groups", isLogin, groupController.getMyGroups); // Lấy danh sách group đã tham gia
 router.post("/request-join", isLogin, groupController.requestJoinGroup); // Gửi yêu cầu tham gia group

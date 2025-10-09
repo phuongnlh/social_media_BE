@@ -819,6 +819,28 @@ const getUserGroups = async (req, res) => {
     }
 };
 
+const searchGroups = async (req, res) => {
+    try {
+        const { query } = req.query;
+        const groups = await Group.find({
+            name: { $regex: query, $options: 'i' }
+        });
+        const groupsWithStats = await Promise.all(
+          groups.map(async (m) => {
+            const stats = await getGroupStats(m._id);
+            return {
+              ...m.toObject(),
+              ...stats,
+              lastActivity: stats.lastActivity || m.created_at,
+            };
+          })
+        );
+        res.status(200).json(groupsWithStats);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
 module.exports = {
     createGroup,
     getMyGroups,
@@ -838,5 +860,6 @@ module.exports = {
     getRestrictMemberList,
     getbannedMemberList,
     demoteOrTransferCreator,
-    getUserGroups
+    getUserGroups,
+    searchGroups
 };
