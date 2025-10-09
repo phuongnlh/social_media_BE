@@ -8,6 +8,7 @@ const { isLogin } = require("../middlewares/auth");
 router.post("/register", UserController.registerUser);
 router.post("/login", UserController.loginUser);
 router.get("/verify-email", UserController.verifyEmail);
+router.post("/resend-verification", UserController.resendVerification);
 router.post("/logout", isLogin, UserController.logoutUser);
 router.post("/logout-all", isLogin, UserController.logoutAllUser);
 router.post("/change-password", isLogin, UserController.changePassword);

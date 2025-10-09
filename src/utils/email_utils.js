@@ -13,9 +13,13 @@ const sendVerificationEmail = async (to, token) => {
   const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${token}`;
 
   const mailOptions = {
-    from: `"My App" <${process.env.SMTP_EMAIL}>`,
+    from: {
+      name: "DailyVibe Support",
+      address: process.env.SMTP_EMAIL,
+    },
     to,
     subject: "Verify your email address",
+    text: `Please verify your email by clicking the link: ${verificationLink}. Note: The link will expire in 15 minutes.`,
     html: `
       <h2>Email Verification</h2>
       <p>Click the link below to verify your email:</p>
@@ -39,7 +43,7 @@ const sendVerificationEmail = async (to, token) => {
 const sendResetPasswordEmail = async (to, link) => {
   const mailOptions = {
     from: {
-      name: "My App",
+      name: "DailyVibe Support",
       address: process.env.SMTP_EMAIL,
     },
     to,

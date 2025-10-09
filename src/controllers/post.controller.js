@@ -443,10 +443,10 @@ const reactToPost = async (req, res) => {
           let contentNoti = "";
           if (otherCount > 0) {
             contentNoti = `${currentUser.user_id.fullName || currentUser.user_id.username
-              } và ${otherCount} người khác đã bày tỏ cảm xúc bài viết của bạn.`;
+              } and ${otherCount} others have reacted to your post.`;
           } else {
             contentNoti = `${currentUser.user_id.fullName || currentUser.user_id.username
-              } đã bày tỏ cảm xúc bài viết của bạn.`;
+              } has reacted to your post.`;
           }
           const io = getSocketIO();
           const userSocketMap = getUserSocketMap();

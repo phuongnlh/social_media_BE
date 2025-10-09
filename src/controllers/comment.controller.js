@@ -167,7 +167,7 @@ const createComment = async (req, res) => {
             notificationsNamespace,
             parentComment.user_id,
             "reply_comment",
-            `${commenter.fullName} đã trả lời bình luận của bạn`,
+            `${commenter.fullName} has replied to your comment.`,
             notificationUserSocketMap,
             { fromUser: commenter._id, relatedId: comment._id }
           );
@@ -180,8 +180,8 @@ const createComment = async (req, res) => {
             await notificationService.createNotificationWithNamespace(
               notificationsNamespace,
               post.user_id,
-              "comment",
-              `${commenter.fullName} đã bình luận vào bài viết của bạn`,
+              "comment_post",
+              `${commenter.fullName} has commented on your post.`,
               notificationUserSocketMap,
               { fromUser: commenter._id, relatedId: comment._id }
             );
@@ -199,8 +199,8 @@ const createComment = async (req, res) => {
             await notificationService.createNotificationWithNamespace(
               notificationsNamespace,
               groupPost.user_id,
-              "comment",
-              `${commenter.fullName} đã bình luận vào bài viết của bạn trong nhóm ${groupName}`,
+              "comment_post_group",
+              `${commenter.fullName} has commented on your post in group ${groupName}`,
               notificationUserSocketMap,
               { fromUser: commenter._id, relatedId: comment._id }
             );
@@ -412,7 +412,7 @@ const reactToComment = async (req, res) => {
         // Lấy danh sách user đã react (trừ chủ comment)
         const reactions = await CommentReaction.find({ comment_id }).populate(
           "user_id",
-          "username"
+          "username fullName"
         );
         // Lọc ra user react khác chủ comment
         const otherReactUsers = reactions.filter(
@@ -426,18 +426,20 @@ const reactToComment = async (req, res) => {
           const otherCount = otherReactUsers.length - 1;
           let contentNoti = "";
           if (otherCount > 0) {
-            contentNoti = `${currentUser.user_id.username} và ${otherCount} người khác đã bày tỏ cảm xúc bình luận của bạn`;
+            contentNoti = `${currentUser.user_id.fullName} and ${otherCount} others have reacted to your comment.`;
           } else {
-            contentNoti = `${currentUser.user_id.username} đã bày tỏ cảm xúc bình luận của bạn`;
+            contentNoti = `${currentUser.user_id.fullName} has reacted to your comment.`;
           }
           const io = getSocketIO();
-          const userSocketMap = getUserSocketMap();
-          await notificationService.createNotification(
-            io,
+          const notificationsNamespace = io.of("/notifications");
+          const notificationUserSocketMap = getNotificationUserSocketMap();
+          await notificationService.createNotificationWithNamespace(
+            notificationsNamespace,
             comment.user_id,
             "comment_reaction",
             contentNoti,
-            userSocketMap
+            notificationUserSocketMap,
+            { fromUser: comment.user_id, relatedId: comment._id }
           );
         }
       }

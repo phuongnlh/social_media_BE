@@ -17,6 +17,9 @@ const io = new Server(server, {
       "https://dailyvibe.online",
       "https://admin.dailyvibe.online",
       "https://api.dailyvibe.online",
+      `${process.env.FRONTEND_URL}`,
+      `${process.env.ADMIN_URL}`,
+      `${process.env.API_URL}`,
     ], // Allow Vite dev server
     methods: ["GET", "POST"],
     credentials: true, // Allow cookies
