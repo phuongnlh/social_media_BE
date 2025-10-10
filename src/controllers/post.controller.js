@@ -9,7 +9,11 @@ const Comment = require("../models/Comment_Reaction/comment.model");
 const Activity = require("../models/Payment_Ads/activity-ads.model");
 const mongoose = require("mongoose");
 const notificationService = require("../services/notification.service");
-const { getSocketIO, getUserSocketMap } = require("../socket/io-instance");
+const {
+  getSocketIO,
+  getUserSocketMap,
+  getNotificationUserSocketMap,
+} = require("../socket/io-instance");
 const moderationService = require("../queues/moderationQueue");
 
 // Tạo bài đăng mới với tệp media (nếu có)
@@ -264,11 +268,12 @@ const softDeletePost = async (req, res) => {
     // Kiểm tra xem bài đăng có quảng cáo đang hoạt động không
     const activeAds = await adsModel.find({
       post_id: postId,
-      status: { $in: ["active", "paused", "waiting_payment"] }
+      status: { $in: ["active", "paused", "waiting_payment"] },
     });
     if (activeAds.length > 0) {
       return res.status(400).json({
-        message: "Không thể xóa bài đăng này vì đang có quảng cáo hoạt động. Vui lòng dừng hoặc hủy quảng cáo trước khi xóa bài đăng.",
+        message:
+          "Không thể xóa bài đăng này vì đang có quảng cáo hoạt động. Vui lòng dừng hoặc hủy quảng cáo trước khi xóa bài đăng.",
         hasActiveAds: true,
       });
     }
@@ -390,7 +395,28 @@ const reactToPost = async (req, res) => {
   try {
     let { post_id, type } = req.body;
     const user_id = req.user._id;
-
+    if (type === null || type === "null") {
+      const deletedReaction = await PostReaction.findOneAndDelete({
+        user_id,
+        post_id,
+      });
+      // Chỉ giảm counter nếu thực sự có reaction bị xóa
+      if (deletedReaction) {
+        await adsModel.updateOne({ post_id: post_id, status: "active" }, [
+          {
+            $set: {
+              total_interactions: {
+                $max: [{ $subtract: ["$total_interactions", 1] }, 0],
+              },
+            },
+          },
+        ]);
+      }
+      res
+        .status(201)
+        .json({ message: "Reaction saved", reaction: deletedReaction });
+      return;
+    }
     if (!type) type = "like"; // Mặc định là "like" nếu không có type
 
     // Kiểm tra xem user đã react post này chưa
@@ -410,16 +436,13 @@ const reactToPost = async (req, res) => {
 
     // Chỉ tăng total_interactions nếu là reaction mới (chưa từng react)
     if (isNewReaction) {
-      await adsModel.updateOne(
-        { post_id: post_id, status: "active" },
-        [
-          {
-            $set: {
-              total_interactions: { $add: ["$total_interactions", 1] }
-            }
-          }
-        ]
-      );
+      await adsModel.updateOne({ post_id: post_id, status: "active" }, [
+        {
+          $set: {
+            total_interactions: { $add: ["$total_interactions", 1] },
+          },
+        },
+      ]);
     }
 
     // Gửi thông báo cho chủ post
@@ -442,58 +465,35 @@ const reactToPost = async (req, res) => {
           const otherCount = otherReactUsers.length - 1;
           let contentNoti = "";
           if (otherCount > 0) {
-            contentNoti = `${currentUser.user_id.fullName || currentUser.user_id.username
-              } and ${otherCount} others have reacted to your post.`;
+            contentNoti = `${
+              currentUser.user_id.fullName || currentUser.user_id.username
+            } and ${otherCount} others have reacted to your post.`;
           } else {
-            contentNoti = `${currentUser.user_id.fullName || currentUser.user_id.username
-              } has reacted to your post.`;
+            contentNoti = `${
+              currentUser.user_id.fullName || currentUser.user_id.username
+            } has reacted to your post.`;
           }
           const io = getSocketIO();
-          const userSocketMap = getUserSocketMap();
-          await notificationService.createNotification(
-            io,
+          const notificationsNamespace = io.of("/notifications");
+          const notificationUserSocketMap = getNotificationUserSocketMap();
+          await notificationService.createNotificationWithNamespace(
+            notificationsNamespace,
             post.user_id,
             "post_reaction",
             contentNoti,
-            userSocketMap
+            notificationUserSocketMap,
+            {
+              fromUser: user_id,
+              relatedId: post_id,
+            }
           );
         }
       }
     } catch (notifyErr) {
       console.error("Không thể gửi thông báo reaction bài viết:", notifyErr);
     }
+
     res.status(201).json({ message: "Reaction saved", reaction });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-// Xoá reaction của user với post
-const removeReaction = async (req, res) => {
-  try {
-    const { post_id } = req.body;
-    const user_id = req.user._id;
-
-    // Xóa reaction
-    const deletedReaction = await PostReaction.findOneAndDelete({ user_id, post_id });
-
-    // Chỉ giảm counter nếu thực sự có reaction bị xóa
-    if (deletedReaction) {
-      await adsModel.updateOne(
-        { post_id: post_id, status: "active" },
-        [
-          {
-            $set: {
-              total_interactions: {
-                $max: [{ $subtract: ["$total_interactions", 1] }, 0]
-              }
-            }
-          }
-        ]
-      );
-    }
-
-    res.status(200).json({ message: "Reaction removed" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1008,13 +1008,13 @@ const searchPost = async (req, res) => {
 const createProgressActivities = async (ads, oldViews, newViews) => {
   const oldProgress = (oldViews / ads.target_views) * 100;
   const newProgress = (newViews / ads.target_views) * 100;
-  
+
   const milestones = [
-    { percent: 25, type: 'progress_25' },
-    { percent: 50, type: 'progress_50' },
-    { percent: 75, type: 'progress_75' }
+    { percent: 25, type: "progress_25" },
+    { percent: 50, type: "progress_50" },
+    { percent: 75, type: "progress_75" },
   ];
-  
+
   for (const milestone of milestones) {
     if (oldProgress < milestone.percent && newProgress >= milestone.percent) {
       await Activity.create({
@@ -1024,8 +1024,8 @@ const createProgressActivities = async (ads, oldViews, newViews) => {
         metadata: {
           campaign_name: ads.campaign_name,
           progress_percent: milestone.percent,
-          views_count: newViews
-        }
+          views_count: newViews,
+        },
       });
     }
   }
@@ -1034,92 +1034,86 @@ const createProgressActivities = async (ads, oldViews, newViews) => {
 const increaseViewCount = async (req, res) => {
   try {
     const postId = req.params.id;
-    
+
     // Lấy thông tin ads trước khi update (để so sánh progress)
-    const adsBeforeUpdate = await adsModel.findOne({ 
-      post_id: postId, 
-      status: "active" 
+    const adsBeforeUpdate = await adsModel.findOne({
+      post_id: postId,
+      status: "active",
     });
-    
+
     // Tăng view count của Post
     await Post.findByIdAndUpdate(postId, { $inc: { viewCount: 1 } });
-    
+
     // Cập nhật Ads với atomic operation
     const updateResult = await adsModel.updateOne(
-      { 
-        post_id: postId, 
-        status: "active" 
+      {
+        post_id: postId,
+        status: "active",
       },
       [
         {
           $set: {
             current_views: {
-              $min: [
-                { $add: ["$current_views", 1] },
-                "$target_views"
-              ]
+              $min: [{ $add: ["$current_views", 1] }, "$target_views"],
             },
             status: {
               $cond: {
-                if: { 
-                  $gte: [
-                    { $add: ["$current_views", 1] }, 
-                    "$target_views"
-                  ] 
+                if: {
+                  $gte: [{ $add: ["$current_views", 1] }, "$target_views"],
                 },
                 then: "completed",
-                else: "active"
-              }
+                else: "active",
+              },
             },
             completed_at: {
               $cond: {
-                if: { 
-                  $gte: [
-                    { $add: ["$current_views", 1] }, 
-                    "$target_views"
-                  ] 
+                if: {
+                  $gte: [{ $add: ["$current_views", 1] }, "$target_views"],
                 },
                 then: new Date(),
-                else: "$completed_at"
-              }
-            }
-          }
-        }
+                else: "$completed_at",
+              },
+            },
+          },
+        },
       ]
     );
-    
+
     // Tạo activities nếu có ads được update
     if (updateResult.modifiedCount > 0 && adsBeforeUpdate) {
       const adsAfterUpdate = await adsModel.findById(adsBeforeUpdate._id);
-      
+
       // Tạo progress activities (25%, 50%, 75%)
       await createProgressActivities(
-        adsAfterUpdate, 
-        adsBeforeUpdate.current_views, 
+        adsAfterUpdate,
+        adsBeforeUpdate.current_views,
         adsAfterUpdate.current_views
       );
-      
+
       // Tạo completed activity
-      if (adsAfterUpdate.status === 'completed' && adsBeforeUpdate.status === 'active') {
+      if (
+        adsAfterUpdate.status === "completed" &&
+        adsBeforeUpdate.status === "active"
+      ) {
         await Activity.create({
           user_id: adsAfterUpdate.user_id,
           ads_id: adsAfterUpdate._id,
-          type: 'campaign_completed',
+          type: "campaign_completed",
           metadata: {
             campaign_name: adsAfterUpdate.campaign_name,
-            views_count: adsAfterUpdate.current_views
-          }
+            views_count: adsAfterUpdate.current_views,
+          },
         });
       }
     }
-    
+
     res.status(200).json({ message: "View count increased" });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       message: "Failed to increase view count",
-      error: err.message 
+      error: err.message,
     });
   }
 };
@@ -1133,7 +1127,6 @@ module.exports = {
   restorePost,
   getTrashedPosts,
   reactToPost,
-  removeReaction,
   getReactionsOfPost,
   getUserReactionsForPosts,
   sharePost,

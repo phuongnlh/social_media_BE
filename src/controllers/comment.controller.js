@@ -105,16 +105,13 @@ const createComment = async (req, res) => {
 
     // Tăng count interaction của ads (nếu có)
     if (post_id) {
-      await adsModel.updateOne(
-        { post_id: post_id, status: "active" },
-        [
-          {
-            $set: {
-              total_interactions: { $add: ["$total_interactions", 1] }
-            }
-          }
-        ]
-      );
+      await adsModel.updateOne({ post_id: post_id, status: "active" }, [
+        {
+          $set: {
+            total_interactions: { $add: ["$total_interactions", 1] },
+          },
+        },
+      ]);
     }
     const comment = await Comment.create({
       user_id,
@@ -169,7 +166,10 @@ const createComment = async (req, res) => {
             "reply_comment",
             `${commenter.fullName} has replied to your comment.`,
             notificationUserSocketMap,
-            { fromUser: commenter._id, relatedId: comment._id }
+            {
+              fromUser: commenter._id,
+              relatedId: comment.post_id || comment.postgr_id,
+            }
           );
         }
       } else {
@@ -183,7 +183,7 @@ const createComment = async (req, res) => {
               "comment_post",
               `${commenter.fullName} has commented on your post.`,
               notificationUserSocketMap,
-              { fromUser: commenter._id, relatedId: comment._id }
+              { fromUser: commenter._id, relatedId: comment.post_id }
             );
           }
         }
@@ -202,7 +202,7 @@ const createComment = async (req, res) => {
               "comment_post_group",
               `${commenter.fullName} has commented on your post in group ${groupName}`,
               notificationUserSocketMap,
-              { fromUser: commenter._id, relatedId: comment._id }
+              { fromUser: commenter._id, relatedId: comment.postgr_id }
             );
           }
         }
