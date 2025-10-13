@@ -27,10 +27,7 @@ const getReports = async (req, res) => {
     let searchFilter = {};
     if (search) {
       searchFilter = {
-        $or: [
-          { reason: { $regex: search, $options: "i" } },
-          { description: { $regex: search, $options: "i" } },
-        ],
+        $or: [{ reason: { $regex: search, $options: "i" } }, { description: { $regex: search, $options: "i" } }],
       };
     }
 
@@ -194,9 +191,7 @@ const addAdminNote = async (req, res) => {
 
     await report.addAdminNote(req.user.id, note.trim());
 
-    await report.populate([
-      { path: "adminNotes.admin", select: "username avatar" },
-    ]);
+    await report.populate([{ path: "adminNotes.admin", select: "username avatar" }]);
 
     res.json({
       success: true,
@@ -277,10 +272,7 @@ const getReportStats = async (req, res) => {
       {
         $match: {
           createdAt: {
-            $gte: new Date(
-              Date.now() -
-                parseInt(timeframe.replace("d", "")) * 24 * 60 * 60 * 1000
-            ),
+            $gte: new Date(Date.now() - parseInt(timeframe.replace("d", "")) * 24 * 60 * 60 * 1000),
           },
         },
       },
@@ -301,10 +293,7 @@ const getReportStats = async (req, res) => {
       {
         $match: {
           createdAt: {
-            $gte: new Date(
-              Date.now() -
-                parseInt(timeframe.replace("d", "")) * 24 * 60 * 60 * 1000
-            ),
+            $gte: new Date(Date.now() - parseInt(timeframe.replace("d", "")) * 24 * 60 * 60 * 1000),
           },
         },
       },
@@ -322,10 +311,7 @@ const getReportStats = async (req, res) => {
         $match: {
           assignedTo: { $exists: true },
           createdAt: {
-            $gte: new Date(
-              Date.now() -
-                parseInt(timeframe.replace("d", "")) * 24 * 60 * 60 * 1000
-            ),
+            $gte: new Date(Date.now() - parseInt(timeframe.replace("d", "")) * 24 * 60 * 60 * 1000),
           },
         },
       },
@@ -352,11 +338,7 @@ const getReportStats = async (req, res) => {
           assigned: 1,
           resolved: 1,
           resolutionRate: {
-            $cond: [
-              { $gt: ["$assigned", 0] },
-              { $multiply: [{ $divide: ["$resolved", "$assigned"] }, 100] },
-              0,
-            ],
+            $cond: [{ $gt: ["$assigned", 0] }, { $multiply: [{ $divide: ["$resolved", "$assigned"] }, 100] }, 0],
           },
         },
       },
@@ -416,10 +398,7 @@ const bulkUpdateReports = async (req, res) => {
       });
     }
 
-    const result = await UserReport.updateMany(
-      { _id: { $in: reportIds } },
-      { $set: updateData }
-    );
+    const result = await UserReport.updateMany({ _id: { $in: reportIds } }, { $set: updateData });
 
     res.json({
       success: true,
@@ -439,6 +418,48 @@ const bulkUpdateReports = async (req, res) => {
   }
 };
 
+// Lấy chi tiết báo cáo
+const getReportById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const report = await UserReport.findById(id).populate([
+      { path: "reportedBy", select: "username avatar email createdAt" },
+      {
+        path: "reportedPost",
+        select: "content images createdAt likes comments",
+      },
+      {
+        path: "reportedUser",
+        select: "username avatar email createdAt isVerified",
+      },
+      { path: "assignedTo", select: "username avatar email" },
+      { path: "resolvedBy", select: "username avatar email" },
+      { path: "adminNotes.admin", select: "username avatar" },
+      { path: "similarReports", select: "reportType createdAt status" },
+    ]);
+
+    if (!report) {
+      return res.status(404).json({
+        success: false,
+        message: "Report not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      data: report,
+    });
+  } catch (error) {
+    console.error("Error getting report:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getReports,
   updateReportStatus,
@@ -447,4 +468,5 @@ module.exports = {
   resolveReport,
   getReportStats,
   bulkUpdateReports,
+  getReportById,
 };
