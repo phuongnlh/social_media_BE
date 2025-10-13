@@ -19,7 +19,7 @@ const MemberSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
-  isDelete: {
+  is_deleted: {
     type: Boolean,
     default: false,
   },

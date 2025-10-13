@@ -1,7 +1,6 @@
 const express = require("express");
 const router = express.Router();
 const passport = require("passport");
-const { upload } = require("../utils/upload_utils");
 const interactController = require("../controllers/comment.controller");
 const { isLogin } = require("../middlewares/auth");
 
@@ -17,7 +16,7 @@ router.put("/restore/:comment_id", isLogin, interactController.restoreComment);
 router.get("/countgr/:postgr_id", isLogin, interactController.getGroupPostCommentCount);
 router.get("/count/:post_id", isLogin, interactController.countCommentsOfPost);
 router.get("/group-post/:postgr_id", interactController.getCommentsOfPost);
-router.post("/", isLogin, upload.array("media", 1), interactController.createComment);
+router.post("/", isLogin, interactController.createComment);
 router.get("/:post_id", interactController.getCommentsOfPost);
 router.put("/:comment_id", isLogin, interactController.editComment);
 router.delete("/:comment_id", isLogin, interactController.softDeleteComment);

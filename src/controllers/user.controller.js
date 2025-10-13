@@ -387,7 +387,7 @@ const getUser = async (req, res) => {
   const userId = req.user._id; // Đã được xác thực từ middleware
   try {
     const user = await User.findById(userId).select(
-      "-hash -salt -isDeleted -twoFASecret"
+      "-hash -salt -is_deleted -twoFASecret"
     );
     res.status(200).json(user);
   } catch (err) {
@@ -399,7 +399,7 @@ const getUserById = async (req, res) => {
   const userId = req.params.userId;
   try {
     const user = await User.findById(userId).select(
-      "-hash -salt -isDeleted -twoFASecret"
+      "-hash -salt -is_deleted -twoFASecret"
     );
     res.status(200).json(user);
   } catch (err) {
@@ -410,22 +410,18 @@ const getUserById = async (req, res) => {
 // Controller upload avatar
 const uploadUserAvatar = async (req, res) => {
   try {
-    if (!req.file) {
-      return res
-        .status(400)
-        .json({ message: "Không có file nào được tải lên" });
-    }
+    const { url } = req.body;
 
     // Cập nhật thông tin user với avatar URL mới
     const user = await User.findByIdAndUpdate(
       req.user._id,
-      { avatar_url: req.file.path || req.file.secure_url },
+      { avatar_url: url },
       { new: true }
     );
 
     return res.status(200).json({
       message: "Cập nhật avatar thành công",
-      avatar_url: req.file.path || req.file.secure_url,
+      avatar_url: url,
     });
   } catch (error) {
     console.error("Lỗi tải lên avatar:", error);
@@ -434,22 +430,17 @@ const uploadUserAvatar = async (req, res) => {
 };
 const uploadBackgroundProfile = async (req, res) => {
   try {
-    if (!req.file) {
-      return res
-        .status(400)
-        .json({ message: "Không có file nào được tải lên" });
-    }
-
+    const { url } = req.body;
     // Cập nhật thông tin user với background URL mới
     const user = await User.findByIdAndUpdate(
       req.user._id,
-      { cover_photo_url: req.file.path || req.file.secure_url },
+      { cover_photo_url: url },
       { new: true }
     );
 
     return res.status(200).json({
       message: "Cập nhật background thành công",
-      cover_photo_url: req.file.path || req.file.secure_url,
+      cover_photo_url: url,
     });
   } catch (error) {
     console.error("Lỗi tải lên background:", error);
@@ -584,7 +575,7 @@ const getProfileWithPrivacy = async (req, res) => {
     }
 
     const user = await User.findOne({ $or: query }).select(
-      "-hash -salt -isDeleted -twoFASecret"
+      "-hash -salt -is_deleted -twoFASecret"
     );
     if (!user)
       return res.status(404).json({ message: "Không tìm thấy người dùng" });

@@ -197,7 +197,7 @@ const getDailyInteractions = async (req, res) => {
     const comments = await commentModel.aggregate([
       {
         $match: {
-          isDeleted: false,
+          is_deleted: false,
           createdAt: { $gte: startOfWeek, $lte: now },
         },
       },

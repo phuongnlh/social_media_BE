@@ -1,7 +1,6 @@
 const express = require("express");
 const router = express.Router();
 const UserController = require("../controllers/user.controller");
-const { uploadAvatar} = require("../utils/upload_utils");
 
 const { isLogin } = require("../middlewares/auth");
 
@@ -17,8 +16,8 @@ router.post("/reset-password", UserController.resetPassword);
 
 router.get("/baseUser", isLogin, UserController.getUser);
 
-router.post("/avatar", isLogin, uploadAvatar.single("file"), UserController.uploadUserAvatar);
-router.post("/background", isLogin, uploadAvatar.single("file"), UserController.uploadBackgroundProfile);
+router.post("/avatar", isLogin, UserController.uploadUserAvatar);
+router.post("/background", isLogin, UserController.uploadBackgroundProfile);
 router.put("/profile", isLogin, UserController.UpdateDataProfile);
 router.get("/privacy", isLogin, UserController.getUserPrivacy);
 router.put("/privacy-multi", isLogin, UserController.updateMultiPrivacySetting);

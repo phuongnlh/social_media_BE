@@ -1200,43 +1200,49 @@ const getInteractionStats = async (req, res) => {
 
         // Get comment statistics for this specific post
         const commentStats = await Comment.aggregate([
-            {
-                $match: {
-                    post_id: ad.post_id,
-                    createdAt: { $gte: startDate, $lte: endDate },
-                    isDeleted: false
-                }
+          {
+            $match: {
+              post_id: ad.post_id,
+              createdAt: { $gte: startDate, $lte: endDate },
+              is_deleted: false,
             },
-            {
-                $group: {
-                    _id: groupBy,
-                    count: { $sum: 1 }
-                }
+          },
+          {
+            $group: {
+              _id: groupBy,
+              count: { $sum: 1 },
             },
-            {
-                $addFields: {
-                    dateString: {
-                        $dateToString: {
-                            format: dateFormat,
-                            date: {
-                                $dateFromParts: period === 'day'
-                                    ? {
-                                        year: "$_id.year",
-                                        month: "$_id.month",
-                                        day: "$_id.day"
-                                    }
-                                    : {
-                                        isoWeekYear: "$_id.year",
-                                        isoWeek: "$_id.week"
-                                    }
-                            }
-                        }
-                    }
-                }
+          },
+          {
+            $addFields: {
+              dateString: {
+                $dateToString: {
+                  format: dateFormat,
+                  date: {
+                    $dateFromParts:
+                      period === "day"
+                        ? {
+                            year: "$_id.year",
+                            month: "$_id.month",
+                            day: "$_id.day",
+                          }
+                        : {
+                            isoWeekYear: "$_id.year",
+                            isoWeek: "$_id.week",
+                          },
+                  },
+                },
+              },
             },
-            {
-                $sort: { "_id.year": 1, "_id.month": 1, "_id.day": 1, "_id.week": 1 }
-            }
+          },
+          {
+            $sort: {
+              "_id.year": 1,
+              "_id.month": 1,
+              "_id.day": 1,
+              "_id.week": 1,
+            },
+          },
         ]);
 
         // Get reaction statistics for this specific post

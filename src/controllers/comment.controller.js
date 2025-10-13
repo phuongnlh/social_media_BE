@@ -23,7 +23,7 @@ const getGroupPostCommentCount = async (req, res) => {
 
     const count = await Comment.countDocuments({
       $or: [{ post_id: postgr_id }, { postgr_id: postgr_id }],
-      isDeleted: false,
+      is_deleted: false,
     });
 
     res.status(200).json({ count });
@@ -36,7 +36,7 @@ const getGroupPostCommentCount = async (req, res) => {
 const createComment = async (req, res) => {
   const MAX_DEPTH = 2;
   try {
-    const { post_id, postgr_id, content, parent_comment_id } = req.body;
+    const { post_id, postgr_id, content, parent_comment_id, media } = req.body;
     const user_id = req.user._id;
 
     // Chỉ nhận 1 trong 2: post_id hoặc postgr_id
@@ -44,15 +44,6 @@ const createComment = async (req, res) => {
       return res
         .status(400)
         .json({ error: "Must provide post_id or postgr_id" });
-    }
-
-    let media = undefined;
-    if (req.files && req.files.length > 0) {
-      const file = req.files[0];
-      media = {
-        url: file.path,
-        media_type: file.mimetype.startsWith("video") ? "video" : "image",
-      };
     }
 
     let level = 0,
@@ -105,16 +96,13 @@ const createComment = async (req, res) => {
 
     // Tăng count interaction của ads (nếu có)
     if (post_id) {
-      await adsModel.updateOne(
-        { post_id: post_id, status: "active" },
-        [
-          {
-            $set: {
-              total_interactions: { $add: ["$total_interactions", 1] }
-            }
-          }
-        ]
-      );
+      await adsModel.updateOne({ post_id: post_id, status: "active" }, [
+        {
+          $set: {
+            total_interactions: { $add: ["$total_interactions", 1] },
+          },
+        },
+      ]);
     }
     const comment = await Comment.create({
       user_id,
@@ -131,7 +119,6 @@ const createComment = async (req, res) => {
     });
 
     if (media) {
-      console.log("Check image/video for moderation:", media.url);
       await moderationService.checkCommentImage(
         comment._id,
         media.url,
@@ -169,7 +156,10 @@ const createComment = async (req, res) => {
             "reply_comment",
             `${commenter.fullName} has replied to your comment.`,
             notificationUserSocketMap,
-            { fromUser: commenter._id, relatedId: comment._id }
+            {
+              fromUser: commenter._id,
+              relatedId: comment.post_id || comment.postgr_id,
+            }
           );
         }
       } else {
@@ -183,7 +173,7 @@ const createComment = async (req, res) => {
               "comment_post",
               `${commenter.fullName} has commented on your post.`,
               notificationUserSocketMap,
-              { fromUser: commenter._id, relatedId: comment._id }
+              { fromUser: commenter._id, relatedId: comment.post_id }
             );
           }
         }
@@ -202,7 +192,7 @@ const createComment = async (req, res) => {
               "comment_post_group",
               `${commenter.fullName} has commented on your post in group ${groupName}`,
               notificationUserSocketMap,
-              { fromUser: commenter._id, relatedId: comment._id }
+              { fromUser: commenter._id, relatedId: comment.postgr_id }
             );
           }
         }
@@ -221,7 +211,7 @@ const createComment = async (req, res) => {
 const getCommentsOfPost = async (req, res) => {
   try {
     const { post_id, postgr_id } = req.params;
-    const filter = { isDeleted: false };
+    const filter = { is_deleted: false };
     if (post_id) filter.post_id = new mongoose.Types.ObjectId(post_id);
     if (postgr_id) filter.postgr_id = new mongoose.Types.ObjectId(postgr_id);
 
@@ -318,7 +308,7 @@ const getCommentsOfPost = async (req, res) => {
 const countCommentsOfPost = async (req, res) => {
   try {
     const { post_id } = req.params;
-    const count = await Comment.countDocuments({ post_id, isDeleted: false });
+    const count = await Comment.countDocuments({ post_id, is_deleted: false });
     res.status(200).json(count);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -356,7 +346,7 @@ const softDeleteComment = async (req, res) => {
     const user_id = req.user._id;
     const comment = await Comment.findOneAndUpdate(
       { _id: comment_id, user_id },
-      { isDeleted: true, deleted_at: new Date() },
+      { is_deleted: true, deleted_at: new Date() },
       { new: true }
     );
     if (!comment)
@@ -377,7 +367,7 @@ const restoreComment = async (req, res) => {
     const user_id = req.user._id;
     const comment = await Comment.findOneAndUpdate(
       { _id: comment_id, user_id },
-      { isDeleted: false, deleted_at: null },
+      { is_deleted: false, deleted_at: null },
       { new: true }
     );
     if (!comment)

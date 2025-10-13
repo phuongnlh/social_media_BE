@@ -1,6 +1,6 @@
-const User = require("../models/user.model");
-const Post = require("../models/post.model");
-const { signToken } = require("../utils/jwt_utils");
+const User = require("../../models/user.model");
+const Post = require("../../models/post.model");
+const { signToken } = require("../../utils/jwt_utils");
 
 const getAllUsers = async (req, res) => {
   try {
@@ -37,7 +37,7 @@ const getAllUsers = async (req, res) => {
       case "active":
         filter.isActive = true;
         filter.isBlocked = false;
-        filter.isDeleted = false;
+        filter.is_deleted = false;
         break;
       case "inactive":
         filter.isActive = false;
@@ -46,7 +46,7 @@ const getAllUsers = async (req, res) => {
         filter.isBlocked = true;
         break;
       case "deleted":
-        filter.isDeleted = true;
+        filter.is_deleted = true;
         break;
       default:
         // For 'all', don't add status filters
@@ -267,7 +267,7 @@ const getUserById = async (req, res) => {
     // Get additional user statistics
     const [friendsCount, postsCount] = await Promise.all([
       // Friends count
-      require("../models/friendship.model")
+      require("../../models/friendship.model")
         .countDocuments({
           $or: [
             { userId: userId, status: "accepted" },
@@ -364,7 +364,7 @@ const updateUserStatus = async (req, res) => {
         actionMessage = "User deactivated successfully";
         break;
       case "delete":
-        updateData = { isDeleted: true, isActive: false };
+        updateData = { is_deleted: true, isActive: false };
         actionMessage = "User deleted successfully";
         break;
     }
@@ -453,7 +453,7 @@ const getPlatformStatistics = async (req, res) => {
               $sum: { $cond: [{ $eq: ["$isBlocked", true] }, 1, 0] },
             },
             deletedUsers: {
-              $sum: { $cond: [{ $eq: ["$isDeleted", true] }, 1, 0] },
+              $sum: { $cond: [{ $eq: ["$is_deleted", true] }, 1, 0] },
             },
             verifiedUsers: {
               $sum: { $cond: [{ $eq: ["$EmailVerified", true] }, 1, 0] },
