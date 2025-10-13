@@ -5,29 +5,16 @@ const {
   updateUserStatus,
   getPlatformStatistics,
   getTopPosters,
-} = require("../controllers/admin.controller");
+} = require("../controllers/ADMIN/admin.controller");
 const {
   getAnalytics,
   getPostStats,
   getUserGrowth,
   getDailyInteractions,
 } = require("../controllers/ADMIN/dashboard.controller");
-const {
-  refreshAccessAdminToken,
-  loginAdmin,
-  logoutAdmin,
-} = require("../controllers/ADMIN/authAdmin.controller");
+const { refreshAccessAdminToken, loginAdmin, logoutAdmin } = require("../controllers/ADMIN/authAdmin.controller");
 const { isAdmin, isLogin } = require("../middlewares/auth");
-const reportController = require("../controllers/report.controller");
-const { param } = require("express-validator");
-const {
-  validateListQuery,
-  validateUpdateStatus,
-  validateAssignReport,
-  validateAddNote,
-  validateResolveReport,
-  validateBulkUpdate,
-} = require("../utils/validate");
+const reportController = require("../controllers/ADMIN/report.controller");
 const router = express.Router();
 
 // Admin authentication
@@ -52,73 +39,16 @@ router.get("/dashboard/user-growth", getUserGrowth);
 router.get("/dashboard/daily-interactions", getDailyInteractions);
 router.get("/dashboard", getAnalytics);
 
-// ================== ADMIN ROUTES ==================
-router.get(
-  "/reports",
-  isLogin,
-  isAdmin,
-  validateListQuery,
-  reportController.getReports
-);
-router.get(
-  "/reports/stats",
-  isLogin,
-  isAdmin,
-  validateListQuery,
-  reportController.getReportStats
-);
-// Lấy chi tiết báo cáo (Admin)
-router.get(
-  "/reports/:id",
-  isLogin,
-  isAdmin,
-  param("id").isMongoId().withMessage("Invalid report ID format"),
-  reportController.getReportById
-);
-
-// Cập nhật trạng thái báo cáo (Admin)
-router.patch(
-  "/reports/:id/status",
-  isLogin,
-  isAdmin,
-  validateUpdateStatus,
-  reportController.updateReportStatus
-);
-
-// Gán báo cáo cho admin (Admin)
-router.patch(
-  "/reports/:id/assign",
-  isLogin,
-  isAdmin,
-  validateAssignReport,
-  reportController.assignReport
-);
-
-// Thêm ghi chú admin (Admin)
-router.post(
-  "/reports/:id/notes",
-  isLogin,
-  isAdmin,
-  validateAddNote,
-  reportController.addAdminNote
-);
-
-// Giải quyết báo cáo (Admin)
-router.patch(
-  "/reports/:id/resolve",
-  isLogin,
-  isAdmin,
-  validateResolveReport,
-  reportController.resolveReport
-);
-
-// Bulk update báo cáo (Admin)
-router.patch(
-  "/reports/bulk-update",
-  isLogin,
-  isAdmin,
-  validateBulkUpdate,
-  reportController.bulkUpdateReports
-);
+//*==============================================================
+//*=================== ADMIN ROUTES (REPORTS) ===================
+//*==============================================================
+router.get("/reports", isLogin, isAdmin, reportController.getReports);
+router.get("/reports/stats", isLogin, isAdmin, reportController.getReportStats);
+router.get("/reports/:id", isLogin, isAdmin, reportController.getReportById); // Lấy chi tiết báo cáo (Admin)
+router.patch("/reports/:id/status", isLogin, isAdmin, reportController.updateReportStatus); // Cập nhật trạng thái báo cáo (Admin)
+router.patch("/reports/:id/assign", isLogin, isAdmin, reportController.assignReport); // Gán báo cáo cho admin (Admin)
+router.post("/reports/:id/notes", isLogin, isAdmin, reportController.addAdminNote); // Thêm ghi chú admin (Admin)
+router.patch("/reports/:id/resolve", isLogin, isAdmin, reportController.resolveReport); // Giải quyết báo cáo (Admin)
+router.patch("/reports/bulk-update", isLogin, isAdmin, reportController.bulkUpdateReports); // Bulk update báo cáo (Admin)
 
 module.exports = router;

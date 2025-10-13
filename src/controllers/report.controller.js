@@ -3,10 +3,7 @@ const Post = require("../models/post.model");
 const User = require("../models/user.model");
 const { validationResult } = require("express-validator");
 const adsModel = require("../models/Payment_Ads/ads.model");
-const {
-  getSocketIO,
-  getNotificationUserSocketMap,
-} = require("../socket/io-instance");
+const { getSocketIO, getNotificationUserSocketMap } = require("../socket/io-instance");
 const notificationService = require("../services/notification.service");
 
 // Tạo báo cáo mới
@@ -21,14 +18,7 @@ const createReport = async (req, res) => {
       });
     }
 
-    const {
-      reportedPost,
-      reportType,
-      description,
-      reason,
-      evidence = [],
-      reporterInfo = {},
-    } = req.body;
+    const { reportedPost, reportType, description, reason, evidence = [], reporterInfo = {} } = req.body;
 
     // Kiểm tra bài viết có tồn tại không
     const post = await Post.findById(reportedPost);
@@ -67,9 +57,7 @@ const createReport = async (req, res) => {
         userAgent: req.get("User-Agent"),
       },
       metadata: {
-        reportSource: req.get("User-Agent")?.includes("Mobile")
-          ? "mobile"
-          : "web",
+        reportSource: req.get("User-Agent")?.includes("Mobile") ? "mobile" : "web",
         language: req.get("Accept-Language")?.split(",")[0] || "en",
       },
     });
@@ -118,48 +106,6 @@ const createReport = async (req, res) => {
     });
   } catch (error) {
     console.error("Error creating report:", error);
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error.message,
-    });
-  }
-};
-
-// Lấy chi tiết báo cáo
-const getReportById = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const report = await UserReport.findById(id).populate([
-      { path: "reportedBy", select: "username avatar email createdAt" },
-      {
-        path: "reportedPost",
-        select: "content images createdAt likes comments",
-      },
-      {
-        path: "reportedUser",
-        select: "username avatar email createdAt isVerified",
-      },
-      { path: "assignedTo", select: "username avatar email" },
-      { path: "resolvedBy", select: "username avatar email" },
-      { path: "adminNotes.admin", select: "username avatar" },
-      { path: "similarReports", select: "reportType createdAt status" },
-    ]);
-
-    if (!report) {
-      return res.status(404).json({
-        success: false,
-        message: "Report not found",
-      });
-    }
-
-    res.json({
-      success: true,
-      data: report,
-    });
-  } catch (error) {
-    console.error("Error getting report:", error);
     res.status(500).json({
       success: false,
       message: "Internal server error",
@@ -259,14 +205,6 @@ const deleteReport = async (req, res) => {
 
 module.exports = {
   createReport,
-  getReports,
-  getReportById,
-  updateReportStatus,
-  assignReport,
-  addAdminNote,
-  resolveReport,
-  getReportStats,
   getUserReports,
   deleteReport,
-  bulkUpdateReports,
 };

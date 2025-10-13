@@ -80,15 +80,7 @@ const getAllUsers = async (req, res) => {
     }
 
     // Build sort object
-    const validSortFields = [
-      "createdAt",
-      "updatedAt",
-      "email",
-      "fullName",
-      "username",
-      "isActive",
-      "EmailVerified",
-    ];
+    const validSortFields = ["createdAt", "updatedAt", "email", "fullName", "username", "isActive", "EmailVerified"];
     const sortField = validSortFields.includes(sortBy) ? sortBy : "createdAt";
     const sortDirection = sortOrder === "asc" ? 1 : -1;
     const sort = { [sortField]: sortDirection };
@@ -102,22 +94,45 @@ const getAllUsers = async (req, res) => {
         // Lookup posts count for each user
         {
           $lookup: {
-            from: "posts", // Collection name (lowercase plural of model name)
+            from: "posts",
             localField: "_id",
             foreignField: "user_id",
             as: "posts",
           },
         },
 
-        // Add posts count field
+        // Add posts count field + status field
         {
           $addFields: {
             postsCount: {
               $size: {
                 $filter: {
                   input: "$posts",
-                  cond: { $ne: ["$$this.is_deleted", true] }, // Only count non-deleted posts
+                  cond: { $ne: ["$$this.is_deleted", true] },
                 },
+              },
+            },
+            status: {
+              $switch: {
+                branches: [
+                  {
+                    case: { $eq: ["$is_deleted", true] },
+                    then: "deleted",
+                  },
+                  {
+                    case: { $eq: ["$isBlocked", true] },
+                    then: "blocked",
+                  },
+                  {
+                    case: { $eq: ["$isActive", true] },
+                    then: "active",
+                  },
+                  {
+                    case: { $eq: ["$isActive", false] },
+                    then: "inactive",
+                  },
+                ],
+                default: "unknown",
               },
             },
           },
@@ -129,14 +144,12 @@ const getAllUsers = async (req, res) => {
             hash: 0,
             salt: 0,
             twoFASecret: 0,
-            posts: 0, // Remove the posts array, keep only the count
+            posts: 0,
           },
         },
 
-        // Sort
+        // Sort, Skip, Limit
         { $sort: sort },
-
-        // Skip and limit for pagination
         { $skip: skip },
         { $limit: limitNum },
       ]),
@@ -154,28 +167,11 @@ const getAllUsers = async (req, res) => {
         $group: {
           _id: null,
           totalUsers: { $sum: 1 },
-          activeUsers: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: ["$isActive", true] },
-                    { $eq: ["$isBlocked", false] },
-                  ],
-                },
-                1,
-                0,
-              ],
-            },
-          },
           blockedUsers: {
             $sum: { $cond: [{ $eq: ["$isBlocked", true] }, 1, 0] },
           },
           verifiedUsers: {
             $sum: { $cond: [{ $eq: ["$EmailVerified", true] }, 1, 0] },
-          },
-          twoFAEnabled: {
-            $sum: { $cond: [{ $eq: ["$twoFAEnabled", true] }, 1, 0] },
           },
         },
       },
@@ -196,10 +192,8 @@ const getAllUsers = async (req, res) => {
 
     const userStats = stats[0] || {
       totalUsers: 0,
-      activeUsers: 0,
       blockedUsers: 0,
       verifiedUsers: 0,
-      twoFAEnabled: 0,
     };
 
     // Format response
@@ -320,13 +314,7 @@ const updateUserStatus = async (req, res) => {
       });
     }
 
-    const validActions = [
-      "block",
-      "unblock",
-      "activate",
-      "deactivate",
-      "delete",
-    ];
+    const validActions = ["block", "unblock", "activate", "deactivate", "delete"];
     if (!validActions.includes(action)) {
       return res.status(400).json({
         success: false,
@@ -375,11 +363,7 @@ const updateUserStatus = async (req, res) => {
     });
 
     // Log admin action
-    console.log(
-      `Admin action: ${action} user ${userId}. Reason: ${
-        reason || "No reason provided"
-      }`
-    );
+    console.log(`Admin action: ${action} user ${userId}. Reason: ${reason || "No reason provided"}`);
 
     res.status(200).json({
       success: true,
@@ -439,10 +423,7 @@ const getPlatformStatistics = async (req, res) => {
               $sum: {
                 $cond: [
                   {
-                    $and: [
-                      { $eq: ["$isActive", true] },
-                      { $eq: ["$isBlocked", false] },
-                    ],
+                    $and: [{ $eq: ["$isActive", true] }, { $eq: ["$isBlocked", false] }],
                   },
                   1,
                   0,
@@ -531,10 +512,7 @@ const getPlatformStatistics = async (req, res) => {
         users: {
           ...stats,
           newUsersThisPeriod,
-          growthRate:
-            stats.totalUsers > 0
-              ? ((newUsersThisPeriod / stats.totalUsers) * 100).toFixed(2) + "%"
-              : "0%",
+          growthRate: stats.totalUsers > 0 ? ((newUsersThisPeriod / stats.totalUsers) * 100).toFixed(2) + "%" : "0%",
         },
         content: {
           totalPosts: postsCount,
@@ -542,10 +520,7 @@ const getPlatformStatistics = async (req, res) => {
           totalLikes: likesCount,
         },
         userGrowth: userGrowth.map((item) => ({
-          date: `${item._id.year}-${String(item._id.month).padStart(
-            2,
-            "0"
-          )}-${String(item._id.day).padStart(2, "0")}`,
+          date: `${item._id.year}-${String(item._id.month).padStart(2, "0")}-${String(item._id.day).padStart(2, "0")}`,
           count: item.count,
         })),
         generatedAt: new Date(),
