@@ -26,8 +26,7 @@ const userSchema = new mongoose.Schema(
     gender: { type: String, enum: ["male", "female", "other"] },
     avatar_url: {
       type: String,
-      default:
-        "https://res.cloudinary.com/doxtbwyyc/image/upload/v1753624666/cHJpdmF0ZS9sci9pbWFnZXMvd2Vic2l0ZS8yMDI1LTA2L3NyLWltYWdlLTIzMDYyNS1iYi1zLTIyNC1tY2J0cHl2OS5qcGc_xoj4fr.jpg",
+      default: "https://minio.dailyvibe.online/dailyvibe/avatars/avatar.jpg",
     },
     cover_photo_url: { type: String },
     isActive: { type: Boolean, default: true },
@@ -35,7 +34,7 @@ const userSchema = new mongoose.Schema(
     EmailVerified: { type: Boolean, default: false },
     PhoneVerified: { type: Boolean, default: false },
     isBlocked: { type: Boolean, default: false },
-    isDeleted: { type: Boolean, default: false },
+    is_deleted: { type: Boolean, default: false },
     twoFASecret: String,
     twoFAEnabled: { type: Boolean, default: false },
     role: { type: String, enum: ["user", "admin"], default: "user" },

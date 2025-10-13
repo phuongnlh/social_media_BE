@@ -1,11 +1,10 @@
 const express = require("express");
 const router = express.Router();
 const passport = require("passport");
-const { uploadGroup } = require("../utils/upload_utils");
 const groupController = require("../controllers/group.controller");
 const { isLogin } = require("../middlewares/auth");
 
-router.post("/", isLogin, uploadGroup.array("media", 1), groupController.createGroup); // Tạo group mới
+router.post("/", isLogin, groupController.createGroup); // Tạo group mới
 router.get("/search", isLogin, groupController.searchGroups); // Tìm kiếm nhóm
 router.get("/get-groups-by-id/:user_id", isLogin, groupController.getUserGroups); // Lấy danh sách group đã tham gia theo user_id
 router.get("/my-groups", isLogin, groupController.getMyGroups); // Lấy danh sách group đã tham gia
@@ -25,6 +24,6 @@ router.get("/restrict-members/:group_id", isLogin, groupController.getRestrictMe
 router.post("/handle-join-request/:request_id", isLogin, groupController.handleJoinRequest); // Duyệt/từ chối yêu cầu tham gia
 router.get("/pending-requests/:group_id", isLogin, groupController.getPendingRequests); // Lấy danh sách người chờ duyệt
 router.post("/change-role", isLogin, groupController.changeMemberRole); // Gán/hạ quyền quản trị
-router.put("/update/:group_id", isLogin, uploadGroup.array("media", 1), groupController.updateGroup); // Chỉnh sửa thông tin nhóm
+router.put("/update/:group_id", isLogin, groupController.updateGroup); // Chỉnh sửa thông tin nhóm
 router.delete("/delete/:group_id", isLogin, groupController.deleteGroup); // Xóa nhóm
 module.exports = router;

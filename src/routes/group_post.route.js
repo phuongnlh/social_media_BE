@@ -1,7 +1,6 @@
 const express = require("express");
 const router = express.Router();
 const passport = require("passport");
-const { uploadGroup } = require("../utils/upload_utils");
 const groupPostController = require("../controllers/post-group.controller");
 const { isLogin } = require("../middlewares/auth");
 
@@ -25,7 +24,7 @@ router.patch('/:post_id/reported-handler', isLogin, groupPostController.handleGr
 
 router.patch("/:id/views", groupPostController.increaseViewCount); // Tăng view count cho bài viết trong group
 router.patch("/:post_id/soft-delete", isLogin, groupPostController.softDeleteGroupPost); // Xoá bài viết trong group (chỉ đánh dấu là đã xoá)
-router.post("/", isLogin, uploadGroup.array("media", 10), groupPostController.createGroupPost); // Tạo bài viết trong group
+router.post("/", isLogin, groupPostController.createGroupPost); // Tạo bài viết trong group
 router.get("/:group_id/:post_id", isLogin, groupPostController.getGroupPostById); // Lấy bài viết theo ID
 router.get("/:group_id", isLogin, groupPostController.getAllPostsInGroup); // Lấy tất cả bài viết trong group
 router.put("/:post_id", isLogin, groupPostController.updateGroupPost); // Cập nhật bài viết trong group
