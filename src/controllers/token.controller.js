@@ -47,7 +47,7 @@ const refreshAccessToken = async (req, res) => {
     res.cookie("refreshToken", newRefreshToken, {
       httpOnly: true,
       secure: false,
-      domain: process.env.FRONTEND_URL,
+      domain: process.env.FRONTEND_URI,
       sameSite: "Lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
