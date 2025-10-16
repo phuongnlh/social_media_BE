@@ -1,5 +1,5 @@
 const redisClient = require("../../config/database.redis");
-const User = require("../../models/user.model");
+const Admin = require("../../models/Admin/admin.model");
 const { verifyToken, signToken } = require("../../utils/jwt_utils");
 const { validatePwd } = require("../../utils/pwd_utils");
 const jwt = require("jsonwebtoken");
@@ -8,7 +8,7 @@ const loginAdmin = async (req, res) => {
   try {
     const { email, password } = req.body;
     // Tìm người dùng theo email
-    const user = await User.findOne({ email: email });
+    const user = await Admin.findOne({ email: email });
     if (!user) {
       return res.status(403).json({ message: "Email or password is incorrect!" });
     }
@@ -34,7 +34,7 @@ const loginAdmin = async (req, res) => {
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: false,
-      domain: process.env.ADMIN_URL,
+      domain: process.env.ADMIN_URI,
       sameSite: "Lax",
       maxAge: 12 * 60 * 60 * 1000,
     });
@@ -70,7 +70,7 @@ const logoutAdmin = async (req, res) => {
 
     await redisClient.del(refreshKey); // Xóa key của token cụ thể
 
-    res.clearCookie("refreshAdminToken"); // Xóa cookie refresh token
+    res.clearCookie("refreshToken"); // Xóa cookie refresh token
 
     res.json({ message: "Đăng xuất thành công" });
   } catch (err) {
@@ -110,7 +110,7 @@ const refreshAccessAdminToken = async (req, res) => {
     res.cookie("refreshToken", newRefreshToken, {
       httpOnly: true,
       secure: false,
-      domain: process.env.ADMIN_URL,
+      domain: process.env.ADMIN_URI,
       sameSite: "Lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
