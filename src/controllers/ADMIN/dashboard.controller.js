@@ -153,9 +153,7 @@ const getUserGrowth = async (req, res) => {
     // Map lại dữ liệu
     let total = 0;
     const result = months.map((m) => {
-      const found = users.find(
-        (u) => u._id.year === m.year && u._id.month === m.month
-      );
+      const found = users.find((u) => u._id.year === m.year && u._id.month === m.month);
       const newUsers = found ? found.newUsers : 0;
       total += newUsers;
       return {
@@ -173,86 +171,69 @@ const getUserGrowth = async (req, res) => {
 
 const getDailyInteractions = async (req, res) => {
   try {
-    // Tính khoảng thời gian 7 ngày gần nhất
     const now = new Date();
     const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - 6); // lùi 6 ngày
+    startOfWeek.setDate(now.getDate() - 6); // Lùi 6 ngày (7 ngày tính cả hôm nay)
 
-    // Reactions (đếm tất cả, không lọc type)
-    const reactions = await post_reactionModel.aggregate([
-      {
-        $match: {
-          createdAt: { $gte: startOfWeek, $lte: now },
-        },
-      },
-      {
-        $group: {
-          _id: { $dayOfWeek: "$createdAt" }, // 1=Sun, 2=Mon, ...
-          count: { $sum: 1 },
-        },
-      },
-    ]);
-
-    // Comments
-    const comments = await commentModel.aggregate([
-      {
-        $match: {
-          is_deleted: false,
-          createdAt: { $gte: startOfWeek, $lte: now },
-        },
-      },
-      {
-        $group: {
-          _id: { $dayOfWeek: "$createdAt" },
-          count: { $sum: 1 },
-        },
-      },
-    ]);
-
-    // Shares (post có shared_post_id)
-    const shares = await postModel.aggregate([
-      {
-        $match: {
-          shared_post_id: { $ne: null },
-          createdAt: { $gte: startOfWeek, $lte: now },
-        },
-      },
-      {
-        $group: {
-          _id: { $dayOfWeek: "$createdAt" },
-          count: { $sum: 1 },
-        },
-      },
-    ]);
-
-    // Map dữ liệu ra đủ 7 ngày
-    const daysMap = {
-      1: "Sun",
-      2: "Mon",
-      3: "Tue",
-      4: "Wed",
-      5: "Thu",
-      6: "Fri",
-      7: "Sat",
+    // --- Helper để format ngày (yyyy-mm-dd) ---
+    const formatDate = (date) => {
+      return date.toISOString().split("T")[0];
     };
 
-    const result = [];
-    for (let i = 1; i <= 7; i++) {
-      result.push({
-        day: daysMap[i],
-        reactions: reactions.find((x) => x._id === i)?.count || 0,
-        comments: comments.find((x) => x._id === i)?.count || 0,
-        shares: shares.find((x) => x._id === i)?.count || 0,
-      });
+    // --- Aggregate chung cho từng model ---
+    const aggregateByDate = async (Model, match = {}) => {
+      return await Model.aggregate([
+        {
+          $match: {
+            ...match,
+            createdAt: { $gte: startOfWeek, $lte: now },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+            },
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+    };
+
+    // Reactions
+    const reactions = await aggregateByDate(post_reactionModel);
+    // Comments
+    const comments = await aggregateByDate(commentModel, { is_deleted: false });
+    // Shares
+    const shares = await aggregateByDate(postModel, { shared_post_id: { $ne: null } });
+
+    // --- Sinh danh sách 7 ngày gần nhất (từ hôm nay lùi về trước) ---
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date();
+      d.setDate(now.getDate() - i);
+      days.push(d);
     }
+
+    // --- Map dữ liệu ra kết quả ---
+    const result = days.map((d) => {
+      const dateStr = formatDate(d);
+      const dayLabel = d.toLocaleDateString("en-US", { weekday: "short" }); // Mon, Tue, Wed...
+
+      return {
+        day: dayLabel,
+        reactions: reactions.find((x) => x._id === dateStr)?.count || 0,
+        comments: comments.find((x) => x._id === dateStr)?.count || 0,
+        shares: shares.find((x) => x._id === dateStr)?.count || 0,
+      };
+    });
 
     res.json(result);
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 };
-
-
 
 module.exports = {
   getAnalytics,

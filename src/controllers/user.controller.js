@@ -387,7 +387,7 @@ const getUser = async (req, res) => {
   const userId = req.user._id; // Đã được xác thực từ middleware
   try {
     const user = await User.findById(userId).select(
-      "-hash -salt -is_deleted -twoFASecret"
+      "-hash -salt -twoFASecret"
     );
     res.status(200).json(user);
   } catch (err) {
@@ -399,7 +399,7 @@ const getUserById = async (req, res) => {
   const userId = req.params.userId;
   try {
     const user = await User.findById(userId).select(
-      "-hash -salt -is_deleted -twoFASecret"
+      "-hash -salt -twoFASecret"
     );
     res.status(200).json(user);
   } catch (err) {
@@ -575,10 +575,13 @@ const getProfileWithPrivacy = async (req, res) => {
     }
 
     const user = await User.findOne({ $or: query }).select(
-      "-hash -salt -is_deleted -twoFASecret"
+      "-hash -salt -twoFASecret"
     );
     if (!user)
       return res.status(404).json({ message: "Không tìm thấy người dùng" });
+
+    if (user.is_deleted)
+      return res.status(404).json({ message: "Nguoi dung da bi xoa" });
 
     const settingsArr = await UserSetting.find({ user_id: profileUserId });
     const privacyMap = {};

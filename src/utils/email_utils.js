@@ -10,7 +10,23 @@ const transporter = nodemailer.createTransport({
 });
 
 const sendVerificationEmail = async (to, token) => {
-  const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${token}`;
+  const template = await EmailTemplate.findOne({ type: "verify_email" });
+  const link = `${process.env.FRONTEND_URL}/verify-email?token=${token}`;
+
+  const subject = template?.subject || "Verify your email address";
+  const html = template
+    ? template.html.replaceAll("{{email}}", to).replaceAll("{{link}}", link)
+    : `
+      <h2>Email Verification</h2>
+      <p>Click the link below to verify your email:</p>
+      <p><strong>Note:</strong> The link will expire in 15 minutes.</p>
+      <button style="background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 5px;">
+        <a href="${link}" style="color: white; text-decoration: none;">Verify Email</a>
+      </button>
+    `;
+  const text =
+    template?.text ||
+    `Please verify your email by clicking the link: ${link}. Note: The link will expire in 15 minutes.`;
 
   const mailOptions = {
     from: {
@@ -18,21 +34,13 @@ const sendVerificationEmail = async (to, token) => {
       address: process.env.SMTP_EMAIL,
     },
     to,
-    subject: "Verify your email address",
-    text: `Please verify your email by clicking the link: ${verificationLink}. Note: The link will expire in 15 minutes.`,
-    html: `
-      <h2>Email Verification</h2>
-      <p>Click the link below to verify your email:</p>
-      <p><strong>Note:</strong> The link will expire in 15 minutes.</p>
-      <button style="background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 5px;">
-        <a href="${verificationLink}" style="color: white; text-decoration: none;">Verify Email</a>
-      </button>
-    `,
+    subject,
+    text,
+    html,
   };
 
   try {
     await transporter.sendMail(mailOptions);
-    console.log("Verification email sent to:", to);
     return true;
   } catch (error) {
     console.error("Error sending email:", error);
@@ -41,15 +49,12 @@ const sendVerificationEmail = async (to, token) => {
 };
 
 const sendResetPasswordEmail = async (to, link) => {
-  const mailOptions = {
-    from: {
-      name: "DailyVibe Support",
-      address: process.env.SMTP_EMAIL,
-    },
-    to,
-    subject: "🔒 Reset Your Password",
-    text: `You requested to reset your password.\n\nClick the link below (valid for 15 minutes):\n${link}`,
-    html: `
+  const template = await EmailTemplate.findOne({ type: "reset_password" });
+
+  const subject = template?.subject || "🔒 Reset Your Password";
+  const html = template
+    ? template.html.replaceAll("{{email}}", to).replaceAll("{{link}}", link)
+    : `
       <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
         <h2 style="color: #4CAF50;">Password Reset Request</h2>
         <p>You requested to reset your password. Click the button below to continue:</p>
@@ -64,7 +69,18 @@ const sendResetPasswordEmail = async (to, link) => {
           If you did not request this, please ignore this email.
         </p>
       </div>
-    `,
+    `;
+  const text =
+    template?.text || `You requested to reset your password.\n\nClick the link below (valid for 15 minutes):\n${link}`;
+  const mailOptions = {
+    from: {
+      name: "DailyVibe Support",
+      address: process.env.SMTP_EMAIL,
+    },
+    to,
+    subject,
+    text,
+    html,
   };
 
   return transporter.sendMail(mailOptions);

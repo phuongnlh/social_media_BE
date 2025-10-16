@@ -1,6 +1,4 @@
-const e = require("express");
 const mongoose = require("mongoose");
-const autoIncrement = require("mongoose-sequence")(mongoose);
 const validator = require("validator");
 const userSchema = new mongoose.Schema(
   {
@@ -11,7 +9,6 @@ const userSchema = new mongoose.Schema(
     email: {
       type: String,
       required: [true, "Email is required"],
-      unique: true,
       lowercase: true,
       validate: {
         validator: validator.isEmail,
@@ -41,6 +38,6 @@ const userSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
-
+userSchema.index({ email: 1 }, { unique: true, partialFilterExpression: { is_deleted: false } });
 const User = mongoose.model("User", userSchema);
 module.exports = User;

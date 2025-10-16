@@ -15,7 +15,7 @@ passport.use(
     },
     async (jwtPayload, done) => {
       const user = await User.findById(jwtPayload.id).select(
-        "-hash -salt -is_deleted -twoFASecret"
+        "-hash -salt -twoFASecret"
       );
       return user
         ? done(null, user)
