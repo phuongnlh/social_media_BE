@@ -34,6 +34,7 @@ const loginAdmin = async (req, res) => {
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: false,
+      domain: process.env.ADMIN_URL,
       sameSite: "Lax",
       maxAge: 12 * 60 * 60 * 1000,
     });
@@ -109,6 +110,7 @@ const refreshAccessAdminToken = async (req, res) => {
     res.cookie("refreshToken", newRefreshToken, {
       httpOnly: true,
       secure: false,
+      domain: process.env.ADMIN_URL,
       sameSite: "Lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
