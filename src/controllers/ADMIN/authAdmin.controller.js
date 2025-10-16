@@ -10,11 +10,7 @@ const loginAdmin = async (req, res) => {
     // Tìm người dùng theo email
     const user = await Admin.findOne({ email: email });
     if (!user) {
-      return res.status(403).json({ message: "Email or password is incorrect!" });
-    }
-
-    if (user.role !== "admin" && user.role !== "super_admin") {
-      return res.status(403).json({ message: "You are not an admin!" });
+      return res.status(403).json({ message: "Cannot find account with this email!" });
     }
 
     // Kiểm tra mật khẩu
