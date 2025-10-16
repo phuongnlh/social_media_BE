@@ -21,6 +21,9 @@ const authenticate = () => async (req, res, next) => {
     if (user.isBlocked) {
       return res.status(403).json({ message: "Your account has been blocked" });
     }
+    if (user.is_deleted) {
+      return res.status(403).json({ message: "Your account has been deleted" });
+    }
     if (!user.EmailVerified) {
       // ✅ Check nếu chưa verify email
       return res.status(403).json({ message: "Please verify your email." });

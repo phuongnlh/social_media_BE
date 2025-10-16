@@ -1,10 +1,7 @@
 const User = require("../models/user.model");
 const { genPwd, validatePwd } = require("../utils/pwd_utils");
 const { signToken, verifyToken } = require("../utils/jwt_utils");
-const {
-  sendVerificationEmail,
-  sendResetPasswordEmail,
-} = require("../utils/email_utils");
+const { sendVerificationEmail, sendResetPasswordEmail } = require("../utils/email_utils");
 const redisClient = require("../config/database.redis");
 const UserSetting = require("../models/user_settings.model");
 const Friendship = require("../models/friendship.model");
@@ -44,8 +41,7 @@ const registerUser = async (req, res) => {
     }
 
     res.status(201).json({
-      message:
-        "Registration successful! Please check your email to verify your account.",
+      message: "Registration successful! Please check your email to verify your account.",
     });
   } catch (err) {
     console.error(err);
@@ -65,9 +61,7 @@ const verifyEmail = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
     if (user.EmailVerified) {
-      return res
-        .status(400)
-        .json({ message: "Email has already been verified!" });
+      return res.status(400).json({ message: "Email has already been verified!" });
     }
     // Cập nhật trạng thái xác thực email
     user.EmailVerified = true;
@@ -142,9 +136,7 @@ const loginUser = async (req, res) => {
 
     // Kiểm tra mật khẩu
     if (!validatePwd(password, user.hash, user.salt)) {
-      return res
-        .status(403)
-        .json({ success: false, message: "Email or Password invalid!" });
+      return res.status(403).json({ success: false, message: "Email or Password invalid!" });
     }
 
     if (user.twoFAEnabled) {
@@ -167,6 +159,7 @@ const loginUser = async (req, res) => {
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: false,
+      domain: process.env.FRONTEND_URL,
       sameSite: "Lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
@@ -269,24 +262,17 @@ const changePassword = async (req, res) => {
     const { oldPassword, newPassword } = req.body;
 
     if (!oldPassword || !newPassword) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Missing password fields" });
+      return res.status(400).json({ success: false, message: "Missing password fields" });
     }
 
     // Tìm người dùng theo ID
     const user = await User.findById(userId);
-    if (!user)
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
     // Kiểm tra mật khẩu cũ
     const isValid = validatePwd(oldPassword, user.hash, user.salt);
     if (!isValid) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Old password is incorrect" });
+      return res.status(401).json({ success: false, message: "Old password is incorrect" });
     }
 
     // Tạo hash mới từ mật khẩu mới
@@ -360,8 +346,7 @@ const resetPassword = async (req, res) => {
     // Tìm người dùng từ ID trong token
     const user = await User.findById(decoded.id);
 
-    if (!user)
-      return res.status(400).json({ message: "Không tìm thấy người dùng" });
+    if (!user) return res.status(400).json({ message: "Không tìm thấy người dùng" });
 
     // Tạo hash mới cho mật khẩu mới
     const { hash, salt } = genPwd(newPassword);
@@ -386,9 +371,7 @@ const resetPassword = async (req, res) => {
 const getUser = async (req, res) => {
   const userId = req.user._id; // Đã được xác thực từ middleware
   try {
-    const user = await User.findById(userId).select(
-      "-hash -salt -is_deleted -twoFASecret"
-    );
+    const user = await User.findById(userId).select("-hash -salt -twoFASecret");
     res.status(200).json(user);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -398,9 +381,7 @@ const getUser = async (req, res) => {
 const getUserById = async (req, res) => {
   const userId = req.params.userId;
   try {
-    const user = await User.findById(userId).select(
-      "-hash -salt -is_deleted -twoFASecret"
-    );
+    const user = await User.findById(userId).select("-hash -salt -twoFASecret");
     res.status(200).json(user);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -413,11 +394,7 @@ const uploadUserAvatar = async (req, res) => {
     const { url } = req.body;
 
     // Cập nhật thông tin user với avatar URL mới
-    const user = await User.findByIdAndUpdate(
-      req.user._id,
-      { avatar_url: url },
-      { new: true }
-    );
+    const user = await User.findByIdAndUpdate(req.user._id, { avatar_url: url }, { new: true });
 
     return res.status(200).json({
       message: "Cập nhật avatar thành công",
@@ -432,11 +409,7 @@ const uploadBackgroundProfile = async (req, res) => {
   try {
     const { url } = req.body;
     // Cập nhật thông tin user với background URL mới
-    const user = await User.findByIdAndUpdate(
-      req.user._id,
-      { cover_photo_url: url },
-      { new: true }
-    );
+    const user = await User.findByIdAndUpdate(req.user._id, { cover_photo_url: url }, { new: true });
 
     return res.status(200).json({
       message: "Cập nhật background thành công",
@@ -454,11 +427,7 @@ const UpdateDataProfile = async (req, res) => {
     return res.status(400).json({ message: "Số điện thoại không hợp lệ" });
   }
   try {
-    await User.findByIdAndUpdate(
-      userId,
-      { username, fullName, email, bio, phone, location, gender },
-      { new: true }
-    );
+    await User.findByIdAndUpdate(userId, { username, fullName, email, bio, phone, location, gender }, { new: true });
 
     res.status(200).json({
       message: "Cập nhật thông tin cá nhân thành công",
@@ -538,9 +507,7 @@ const updateMultiPrivacySetting = async (req, res) => {
       }));
 
     if (bulkOps.length === 0) {
-      return res
-        .status(400)
-        .json({ message: "Không có key hợp lệ để cập nhật" });
+      return res.status(400).json({ message: "Không có key hợp lệ để cập nhật" });
     }
 
     await UserSetting.bulkWrite(bulkOps);
@@ -574,11 +541,10 @@ const getProfileWithPrivacy = async (req, res) => {
       query.unshift({ _id: profileUserId });
     }
 
-    const user = await User.findOne({ $or: query }).select(
-      "-hash -salt -is_deleted -twoFASecret"
-    );
-    if (!user)
-      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    const user = await User.findOne({ $or: query }).select("-hash -salt -twoFASecret");
+    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
+
+    if (user.is_deleted) return res.status(404).json({ message: "Nguoi dung da bi xoa" });
 
     const settingsArr = await UserSetting.find({ user_id: profileUserId });
     const privacyMap = {};
@@ -644,13 +610,7 @@ const getProfileWithPrivacy = async (req, res) => {
     }
 
     // Nếu profile là public hoặc friends thì các trường/tab sẽ xét quyền riêng
-    const [
-      canViewPosts,
-      canViewPhotos,
-      canViewVideos,
-      canViewFriends,
-      canViewGroups,
-    ] = await Promise.all([
+    const [canViewPosts, canViewPhotos, canViewVideos, canViewFriends, canViewGroups] = await Promise.all([
       canView("profile.post"),
       canView("profile.photo"),
       canView("profile.video"),
@@ -686,8 +646,7 @@ const generateTwoFASecret = async (req, res) => {
   try {
     const userId = req.user._id;
     const user = await User.findById(userId);
-    if (!user)
-      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
     const secret = speakeasy.generateSecret({
       name: "MySocialApp",
       length: 20,
@@ -708,10 +667,8 @@ const enableTwoFA = async (req, res) => {
     const userId = req.user._id;
     const { token } = req.body;
     const user = await User.findById(userId);
-    if (!user)
-      return res.status(404).json({ message: "Không tìm thấy người dùng" });
-    if (user.twoFAEnabled)
-      return res.status(400).json({ message: "Đã kích hoạt 2FA" });
+    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (user.twoFAEnabled) return res.status(400).json({ message: "Đã kích hoạt 2FA" });
     const verified = speakeasy.totp.verify({
       secret: user.twoFASecret,
       encoding: "base32",
@@ -735,10 +692,8 @@ const verifyTwoFA = async (req, res) => {
     const userId = req.user._id;
     const { token } = req.body;
     const user = await User.findById(userId);
-    if (!user)
-      return res.status(404).json({ message: "Không tìm thấy người dùng" });
-    if (!user.twoFAEnabled)
-      return res.status(400).json({ message: "Chua kích hoạt 2FA" });
+    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user.twoFAEnabled) return res.status(400).json({ message: "Chua kích hoạt 2FA" });
     const verified = speakeasy.totp.verify({
       secret: user.twoFASecret,
       encoding: "base32",
@@ -761,10 +716,8 @@ const verifyTwoFALogin = async (req, res) => {
   try {
     const { userId, code } = req.body;
     const user = await User.findById(userId);
-    if (!user)
-      return res.status(404).json({ message: "Không tìm thấy người dùng" });
-    if (!user.twoFAEnabled)
-      return res.status(400).json({ message: "Chua kích hoạt 2FA" });
+    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user.twoFAEnabled) return res.status(400).json({ message: "Chua kích hoạt 2FA" });
     const verified = speakeasy.totp.verify({
       secret: user.twoFASecret,
       encoding: "base32",
@@ -787,6 +740,7 @@ const verifyTwoFALogin = async (req, res) => {
       res.cookie("refreshToken", refreshToken, {
         httpOnly: true,
         secure: false,
+        domain: process.env.FRONTEND_URL,
         sameSite: "Lax",
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
@@ -806,10 +760,8 @@ const disableTwoFA = async (req, res) => {
     const userId = req.user._id;
     const { token } = req.body;
     const user = await User.findById(userId);
-    if (!user)
-      return res.status(404).json({ message: "Không tìm thấy người dùng" });
-    if (!user.twoFAEnabled)
-      return res.status(400).json({ message: "Chua kích hoạt 2FA" });
+    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user.twoFAEnabled) return res.status(400).json({ message: "Chua kích hoạt 2FA" });
     const verified = speakeasy.totp.verify({
       secret: user.twoFASecret,
       encoding: "base32",

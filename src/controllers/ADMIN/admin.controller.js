@@ -12,7 +12,8 @@ const getAllUsers = async (req, res) => {
       sortOrder = "desc",
       status = "all", // all, active, inactive, blocked, deleted
       verified = "all", // all, verified, unverified
-      twoFA = "all", // all, enabled, disabled
+      gender = "all", // all, male, female, other
+      location = "all", // all, specific location
     } = req.query;
 
     // Validate and sanitize inputs
@@ -32,15 +33,22 @@ const getAllUsers = async (req, res) => {
       ];
     }
 
+    // Gender filter
+    if (["male", "female", "other"].includes(gender)) {
+      filter.gender = gender;
+    }
+
+    // Location filter
+    if (location !== "all") {
+      filter.location = { $regex: location, $options: "i" };
+    }
+
     // Status filter
     switch (status) {
       case "active":
         filter.isActive = true;
         filter.isBlocked = false;
         filter.is_deleted = false;
-        break;
-      case "inactive":
-        filter.isActive = false;
         break;
       case "blocked":
         filter.isBlocked = true;
@@ -63,19 +71,6 @@ const getAllUsers = async (req, res) => {
         break;
       default:
         // For 'all', don't add verification filter
-        break;
-    }
-
-    // Two-Factor Authentication filter
-    switch (twoFA) {
-      case "enabled":
-        filter.twoFAEnabled = true;
-        break;
-      case "disabled":
-        filter.twoFAEnabled = false;
-        break;
-      default:
-        // For 'all', don't add 2FA filter
         break;
     }
 
@@ -216,7 +211,6 @@ const getAllUsers = async (req, res) => {
           sortOrder,
           status,
           verified,
-          twoFA,
         },
         statistics: {
           ...userStats,
@@ -657,10 +651,35 @@ const getTopPosters = async (req, res) => {
   }
 };
 
+const deleteUserById = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    await User.findByIdAndUpdate(userId, {
+      fullName: "Deleted User",
+      email: null,
+      username: null,
+      avatar_url: "https://minio.dailyvibe.online/dailyvibe/avatars/avatar.jpg",
+      is_deleted: true,
+      isActive: false,
+    });
+    res.status(200).json({
+      success: true,
+      message: "User deleted successfully",
+    });
+  } catch (error) {
+    console.error("Error deleting user:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error while deleting user",
+    });
+  }
+};
+
 module.exports = {
   getAllUsers,
   getUserById,
   updateUserStatus,
   getPlatformStatistics,
   getTopPosters,
+  deleteUserById,
 };
