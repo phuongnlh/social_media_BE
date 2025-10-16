@@ -20,10 +20,9 @@ const seedAdmin = async () => {
         hash,
         salt,
       });
-      console.log(`✅ Inserted: ${template.name}`);
     }
 
-    console.log("✨ Email templates seeded successfully!");
+    console.log("✨ Admin user seeded successfully!");
     process.exit(0);
   } catch (err) {
     console.error("❌ Seeding error:", err);
