@@ -6,10 +6,10 @@ const postModel = require("../models/post.model");
 const userModel = require("../models/user.model");
 const { getSocketIO, getNotificationUserSocketMap } = require("../socket/io-instance");
 const notificationService = require("../services/notification.service");
-const  pLimit  = require("p-limit");
+const pLimit = require("p-limit");
 const net = require("net");
 
-const limit = pLimit.default(3); // max 3 request song song
+const limit = pLimit(3); // max 3 request song song
 
 // Kiểm tra gRPC service trước khi gọi
 async function isGrpcAlive(host = "localhost", port = 50051) {
