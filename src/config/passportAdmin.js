@@ -4,6 +4,7 @@ const Admin = require("../models/Admin/admin.model");
 const publicKey = require("fs").readFileSync("./src/config/public_key.pem", "utf-8");
 
 passport.use(
+  "jwt-admin",
   new Strategy(
     {
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),

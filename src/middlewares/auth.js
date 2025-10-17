@@ -13,7 +13,7 @@ const authenticate = () => async (req, res, next) => {
     return res.status(401).json({ message: "Token has been revoked (logout)" });
   }
 
-  passport.authenticate("jwt", { session: false }, (err, user) => {
+  passport.authenticate("jwt-user", { session: false }, (err, user) => {
     if (err || !user) {
       return res
         .status(err ? 500 : 401)
@@ -46,7 +46,7 @@ const authenticateAdmin = () => async (req, res, next) => {
     return res.status(401).json({ message: "Token has been revoked (logout)" });
   }
 
-  passportAdmin.authenticate("jwt", { session: false }, (err, user) => {
+  passportAdmin.authenticate("jwt-admin", { session: false }, (err, user) => {
     if (err || !user) {
       return res.status(err ? 500 : 401).json({ message: err ? "Internal Server Error" : "Unauthorized" });
     }
