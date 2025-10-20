@@ -243,8 +243,8 @@ const getAllPosts = async (req, res) => {
         $match: {
           $expr:
             hasMedia === "true"
-              ? { $gt: [{ $size: "$mediaCheck" }, 0] } // có media
-              : { $eq: [{ $size: "$mediaCheck" }, 0] }, // không có media
+              ? { $gt: [{ $size: { $ifNull: ["$mediaCheck", []] } }, 0] }
+              : { $eq: [{ $size: { $ifNull: ["$mediaCheck", []] } }, 0] },
         },
       });
     }
