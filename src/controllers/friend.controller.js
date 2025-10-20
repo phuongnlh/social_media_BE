@@ -1,10 +1,7 @@
 const Friendship = require("../models/friendship.model");
 const User = require("../models/user.model");
 const notificationService = require("../services/notification.service");
-const {
-  getSocketIO,
-  getNotificationUserSocketMap,
-} = require("../socket/io-instance");
+const { getSocketIO, getNotificationUserSocketMap } = require("../socket/io-instance");
 const postModel = require("../models/post.model");
 const { default: mongoose } = require("mongoose");
 
@@ -13,10 +10,7 @@ const sendFriendRequest = async (req, res) => {
   const userId1 = req.user._id;
   const { user_id } = req.body;
 
-  if (userId1.toString() === user_id)
-    return res
-      .status(400)
-      .json({ message: "Không thể tự kết bạn với chính mình." });
+  if (userId1.toString() === user_id) return res.status(400).json({ message: "Không thể tự kết bạn với chính mình." });
 
   try {
     // Kiểm tra xem đã có mối quan hệ bạn bè hoặc đã có lời mời trước đó
@@ -27,10 +21,7 @@ const sendFriendRequest = async (req, res) => {
       ],
     });
 
-    if (existing)
-      return res
-        .status(409)
-        .json({ message: "Đã tồn tại lời mời kết bạn hoặc đã là bạn bè." });
+    if (existing) return res.status(409).json({ message: "Đã tồn tại lời mời kết bạn hoặc đã là bạn bè." });
 
     // Tạo mối quan hệ bạn bè mới với trạng thái mặc định là "pending"
     const friendship = await Friendship.create({
@@ -80,10 +71,7 @@ const cancelFriendRequest = async (req, res) => {
       ],
     });
 
-    if (!friendship)
-      return res
-        .status(404)
-        .json({ message: "Không tìm thấy mối quan hệ bạn bè" });
+    if (!friendship) return res.status(404).json({ message: "Không tìm thấy mối quan hệ bạn bè" });
 
     res.status(200).json({ message: "Đã hủy kết bạn", friendship });
   } catch (err) {
@@ -103,9 +91,7 @@ const respondFriendRequest = async (req, res) => {
       user_id_2: userId,
     });
     if (!friendship || friendship.user_id_2.toString() !== userId.toString())
-      return res
-        .status(404)
-        .json({ message: "Không tìm thấy lời mời kết bạn" });
+      return res.status(404).json({ message: "Không tìm thấy lời mời kết bạn" });
     if (action === "accept") {
       // Chấp nhận lời mời kết bạn
       friendship.status = "accepted";
@@ -146,13 +132,7 @@ const respondFriendRequest = async (req, res) => {
     // Lưu thay đổi trạng thái
     await friendship.save();
     res.json({
-      message: `Đã ${
-        action === "accept"
-          ? "chấp nhận"
-          : action === "decline"
-          ? "từ chối"
-          : "chặn"
-      } lời mời kết bạn`,
+      message: `Đã ${action === "accept" ? "chấp nhận" : action === "decline" ? "từ chối" : "chặn"} lời mời kết bạn`,
       friendship,
     });
   } catch (err) {
@@ -213,9 +193,7 @@ const getUnfriendedUsers = async (req, res) => {
     });
 
     const myFriendIds = myFriends.map((f) =>
-      f.user_id_1.toString() === userId.toString()
-        ? f.user_id_2.toString()
-        : f.user_id_1.toString()
+      f.user_id_1.toString() === userId.toString() ? f.user_id_2.toString() : f.user_id_1.toString()
     );
 
     // 🔹 Nếu chưa có bạn bè → lấy random 10 người (trừ bản thân)
@@ -236,10 +214,7 @@ const getUnfriendedUsers = async (req, res) => {
     // 🔹 Tìm bạn của bạn bè
     const friendsOfFriends = await Friendship.find({
       status: "accepted",
-      $or: [
-        { user_id_1: { $in: myFriendIds } },
-        { user_id_2: { $in: myFriendIds } },
-      ],
+      $or: [{ user_id_1: { $in: myFriendIds } }, { user_id_2: { $in: myFriendIds } }],
     });
 
     const countMap = {};
@@ -254,25 +229,17 @@ const getUnfriendedUsers = async (req, res) => {
           ? id1
           : null;
 
-      if (
-        other &&
-        !myFriendIds.includes(other) &&
-        other !== userId.toString()
-      ) {
+      if (other && !myFriendIds.includes(other) && other !== userId.toString()) {
         countMap[other] = (countMap[other] || 0) + 1;
       }
     });
 
     // 🔹 Lấy danh sách userId sắp xếp theo mutual friend
-    const sortedUserIds = Object.keys(countMap).sort(
-      (a, b) => countMap[b] - countMap[a]
-    );
+    const sortedUserIds = Object.keys(countMap).sort((a, b) => countMap[b] - countMap[a]);
 
     let recommendedUsers = [];
     if (sortedUserIds.length > 0) {
-      const objectIds = sortedUserIds.map(
-        (id) => new mongoose.Types.ObjectId(id)
-      );
+      const objectIds = sortedUserIds.map((id) => new mongoose.Types.ObjectId(id));
       const users = await User.find({
         _id: { $in: objectIds },
         role: "user",
@@ -347,6 +314,7 @@ const searchFriends = async (req, res) => {
   try {
     const friends = await User.find({
       $or: [{ fullName: { $regex: query, $options: "i" } }],
+      is_deleted: false,
     }).select("_id fullName avatar_url username bio");
 
     // Với mỗi friend, gắn thêm số post + số bạn
@@ -388,14 +356,13 @@ const searchMyFriends = async (req, res) => {
     });
 
     // Lấy ra ID của những người bạn (người còn lại trong mỗi cặp)
-    const friendIds = myFriends.map((f) =>
-      f.user_id_1.toString() === userId.toString() ? f.user_id_2 : f.user_id_1
-    );
+    const friendIds = myFriends.map((f) => (f.user_id_1.toString() === userId.toString() ? f.user_id_2 : f.user_id_1));
 
     // Tìm bạn bè theo tên (nếu có query), và chỉ trong danh sách bạn bè
     const friends = await User.find({
       _id: { $in: friendIds },
       ...(query ? { fullName: { $regex: query, $options: "i" } } : {}),
+      is_deleted: false,
     }).select("_id fullName avatar_url username bio");
 
     // Gắn thêm thống kê: số bài viết + số bạn bè
