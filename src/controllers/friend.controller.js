@@ -203,6 +203,7 @@ const getUnfriendedUsers = async (req, res) => {
           $match: {
             _id: { $ne: new mongoose.Types.ObjectId(userId) },
             role: "user",
+            is_deleted: false,
           },
         },
         { $sample: { size: 10 } },
@@ -243,6 +244,7 @@ const getUnfriendedUsers = async (req, res) => {
       const users = await User.find({
         _id: { $in: objectIds },
         role: "user",
+        is_deleted: false,
       })
         .select("username fullName avatar_url")
         .lean();
@@ -266,6 +268,7 @@ const getUnfriendedUsers = async (req, res) => {
           $match: {
             _id: { $nin: excludeIds },
             role: "user",
+            is_deleted: false,
           },
         },
         { $sample: { size: 10 - recommendedUsers.length } },
