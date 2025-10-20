@@ -38,6 +38,6 @@ const userSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
-userSchema.index({ email: 1 }, { unique: true, partialFilterExpression: { is_deleted: false } });
+userSchema.index({ email: 1, username: 1 }, { unique: true, partialFilterExpression: { is_deleted: false } });
 const User = mongoose.model("User", userSchema);
 module.exports = User;
