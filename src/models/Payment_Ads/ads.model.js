@@ -41,7 +41,8 @@ const AdsSchema = new mongoose.Schema({
     //payment_failed: Thanh toán thất bại
     //canceled: người dùng hủy checkout hoặc session hết hạn
     //deleted: Xóa mềm
-    enum: ['active', 'paused', 'completed', 'waiting_payment', 'pending_review', 'payment_failed', 'canceled', 'deleted'],
+    //rejected: QC bị từ chối do vi phạm chính sách (không cho phép chạy lại)
+    enum: ['active', 'paused', 'completed', 'waiting_payment', 'pending_review', 'payment_failed', 'canceled', 'deleted', 'rejected'],
     default: 'waiting_payment', required: true, index: true
   },
 }, {
