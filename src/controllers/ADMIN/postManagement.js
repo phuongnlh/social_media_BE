@@ -230,7 +230,10 @@ const getAllPosts = async (req, res) => {
 
     // Handle media filter in aggregation if needed
     if (hasMedia !== "" && hasMedia !== undefined && hasMedia !== null) {
-      const mediaCondition = hasMedia === "true" ? { $ne: [] } : { $eq: [] };
+      const mediaCondition =
+        hasMedia === "true"
+          ? { $expr: { $gt: [{ $size: "$mediaCheck" }, 0] } }
+          : { $expr: { $eq: [{ $size: "$mediaCheck" }, 0] } };
 
       // Add media lookup before the match stage
       aggregationPipeline.splice(-3, 0, {
