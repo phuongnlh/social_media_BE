@@ -34,16 +34,19 @@ const registerUser = async (req, res) => {
     const token = signToken({ id: newUser._id }, "15m");
 
     // Gửi email xác thực tài khoản
-    const result = await sendVerificationEmail(email, token);
-    if (!result) {
+    try {
+      await sendVerificationEmail(email, token);
+    } catch (err) {
       await User.findByIdAndDelete(newUser._id);
-      throw new Error("Failed to send verification email.");
+      console.error(err);
+      return res.status(500).json({ message: "Failed to send verification email." });
     }
 
     res.status(201).json({
       message: "Registration successful! Please check your email to verify your account.",
     });
   } catch (err) {
+    await User.findByIdAndDelete(newUser._id);
     console.error(err);
     return res.status(500).json({ message: "Internal server error." });
   }
