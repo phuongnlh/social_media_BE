@@ -658,7 +658,7 @@ const generateTwoFASecret = async (req, res) => {
       twoFASecret: secret.base32,
     });
     const qr = await qrcode.toDataURL(secret.otpauth_url);
-    return res.status(200).json({ qr });
+    return res.status(200).json({ qr, secret: secret.base32, otpauth_url: secret.otpauth_url });
   } catch (error) {
     console.error("Lỗi kích hoạt 2FA:", error);
     return res.status(500).json({ message: "Lỗi server" });
