@@ -3,7 +3,7 @@ const validator = require("validator");
 const userSchema = new mongoose.Schema(
   {
     id: { type: mongoose.Schema.ObjectId },
-    username: { type: String, minLength: 8, unique: true },
+    username: { type: String, minLength: 8 },
     hash: { type: String, required: true },
     salt: { type: String, required: true },
     email: {
@@ -38,6 +38,8 @@ const userSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
-userSchema.index({ email: 1, username: 1 }, { unique: true, partialFilterExpression: { is_deleted: false } });
+userSchema.index({ email: 1 }, { unique: true, partialFilterExpression: { is_deleted: false } });
+
+userSchema.index({ username: 1 }, { unique: true, partialFilterExpression: { is_deleted: false } });
 const User = mongoose.model("User", userSchema);
 module.exports = User;
