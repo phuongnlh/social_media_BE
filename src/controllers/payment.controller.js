@@ -190,6 +190,7 @@ const createMoMoSession = async (req, res, ads, payment, amount) => {
     });
     // Make request to MoMo
     const momoResponse = await makeMoMoRequest(requestBody);
+    console.log("Ipn Url:", ipnUrl);
 
     if (momoResponse.resultCode === 0) {
       // Update payment record with MoMo info
