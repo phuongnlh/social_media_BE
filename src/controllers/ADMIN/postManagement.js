@@ -171,16 +171,6 @@ const getAllPosts = async (req, res) => {
         },
       },
 
-      // Lookup post views
-      {
-        $lookup: {
-          from: "postviews",
-          localField: "_id",
-          foreignField: "post_id",
-          as: "views",
-        },
-      },
-
       // Add computed fields
       {
         $addFields: {
@@ -189,7 +179,6 @@ const getAllPosts = async (req, res) => {
           sharesCount: {
             $ifNull: [{ $arrayElemAt: ["$shares_count.count", 0] }, 0],
           },
-          viewCount: { $size: "$views" },
           engagementScore: {
             $add: [
               { $size: "$reactions" },

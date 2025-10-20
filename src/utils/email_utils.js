@@ -1,4 +1,5 @@
 const nodemailer = require("nodemailer");
+const EmailTemplate = require("../models/Admin/emailTemplate.model");
 require("dotenv").config();
 
 const transporter = nodemailer.createTransport({
