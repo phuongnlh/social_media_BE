@@ -230,12 +230,6 @@ const getAllPosts = async (req, res) => {
 
     // Handle media filter in aggregation if needed
     if (hasMedia !== "" && hasMedia !== undefined && hasMedia !== null) {
-      const mediaCondition =
-        hasMedia === "true"
-          ? { $expr: { $gt: [{ $size: "$mediaCheck" }, 0] } }
-          : { $expr: { $eq: [{ $size: "$mediaCheck" }, 0] } };
-
-      // Add media lookup before the match stage
       aggregationPipeline.splice(-3, 0, {
         $lookup: {
           from: "postmedias",
@@ -245,10 +239,12 @@ const getAllPosts = async (req, res) => {
         },
       });
 
-      // Add media filter to match conditions
       aggregationPipeline.splice(-2, 0, {
         $match: {
-          mediaCheck: mediaCondition,
+          $expr:
+            hasMedia === "true"
+              ? { $gt: [{ $size: "$mediaCheck" }, 0] } // có media
+              : { $eq: [{ $size: "$mediaCheck" }, 0] }, // không có media
         },
       });
     }
