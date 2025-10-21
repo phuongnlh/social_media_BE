@@ -17,6 +17,8 @@ const paymentRoutes = require("./payment.route");
 const storyRoutes = require("./story.route");
 const adminRoutes = require("./admin.route");
 const reportRoutes = require("./report.route");
+const systemSettingsRoutes = require("./systemSettings.route");
+const uploadMediaRoutes = require("./upload-media.route");
 const router = express.Router();
 
 router.get("/", (req, res) => {
@@ -39,4 +41,6 @@ router.use("/payment", paymentRoutes);
 router.use("/stories", storyRoutes);
 router.use("/admin", adminRoutes);
 router.use("/reports", reportRoutes);
+router.use("/admin/settings", systemSettingsRoutes);
+router.use("/upload", uploadMediaRoutes);
 module.exports = router;

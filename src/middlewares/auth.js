@@ -1,4 +1,5 @@
 const passport = require("../config/passport");
+const passportAdmin = require("../config/passportAdmin");
 const redisClient = require("../config/database.redis");
 
 const authenticate = () => async (req, res, next) => {
@@ -12,7 +13,7 @@ const authenticate = () => async (req, res, next) => {
     return res.status(401).json({ message: "Token has been revoked (logout)" });
   }
 
-  passport.authenticate("jwt", { session: false }, (err, user) => {
+  passport.authenticate("jwt-user", { session: false }, (err, user) => {
     if (err || !user) {
       return res
         .status(err ? 500 : 401)
@@ -20,6 +21,9 @@ const authenticate = () => async (req, res, next) => {
     }
     if (user.isBlocked) {
       return res.status(403).json({ message: "Your account has been blocked" });
+    }
+    if (user.is_deleted) {
+      return res.status(403).json({ message: "Your account has been deleted" });
     }
     if (!user.EmailVerified) {
       // ✅ Check nếu chưa verify email
@@ -31,6 +35,34 @@ const authenticate = () => async (req, res, next) => {
   })(req, res, next);
 };
 
-const isLogin = authenticate();
+const authenticateAdmin = () => async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.split(" ")[1];
+  if (!token) return res.status(401).json({ message: "No token provided" });
 
-module.exports = { isLogin };
+  // ⚠️ Kiểm tra blacklist trước khi kiểm tra token hợp lệ
+  const isBlacklisted = await redisClient.get(`blacklist:${token}`);
+  if (isBlacklisted) {
+    return res.status(401).json({ message: "Token has been revoked (logout)" });
+  }
+
+  passportAdmin.authenticate("jwt-admin", { session: false }, (err, user) => {
+    if (err || !user) {
+      return res.status(err ? 500 : 401).json({ message: err ? "Internal Server Error" : "Unauthorized" });
+    }
+    if (user.isBlocked) {
+      return res.status(403).json({ message: "Your account has been blocked" });
+    }
+    if (user.is_deleted) {
+      return res.status(403).json({ message: "Your account has been deleted" });
+    }
+
+    req.user = user;
+    next();
+  })(req, res, next);
+};
+
+const isLogin = authenticate();
+const isAdmin = authenticateAdmin();
+
+module.exports = { isLogin, isAdmin };

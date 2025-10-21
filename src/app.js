@@ -13,29 +13,27 @@ const http = require("http");
 
 const app = express();
 const server = http.createServer(app);
-
 // CORS configuration for HTTP requests
 app.use(
   cors({
     origin: [
       "http://localhost:5173",
       "http://127.0.0.1:5173",
-      "http://192.168.21.145:5173",
-      "https://74027a3132cc.ngrok-free.app",
-      "http://10.0.3.2:8081",
+      "https://dailyvibe.online",
+      "https://admin.dailyvibe.online",
+      "https://api.dailyvibe.online",
+      "https://dailyvibe.local",
+      "https://admin.dailyvibe.local",
+      "https://api.dailyvibe.local",
     ],
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "X-Requested-With",
-      "ngrok-skip-browser-warning",
-      "X-Client-IP",
-    ],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "X-Client-IP"],
     credentials: true, // Allow cookies and authorization headers
   })
 );
-app.use('/api/v1/payment/stripe/webhook', express.raw({type: 'application/json'}));
+app.use("/api/v1/payment/stripe/webhook", express.raw({ type: "application/json" }));
+
+app.use("api/v1/payment/momo/webhook", express.json());
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

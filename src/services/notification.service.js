@@ -37,15 +37,29 @@ const createNotificationWithNamespace = async (
   extraData = {}
 ) => {
   try {
-    // Tạo thông báo trong cơ sở dữ liệu
-    const notification = await Notification.create({
+    let notification;
+    const oldNotification = await Notification.findOne({
       user_id: userId,
-      from_user: extraData.fromUser || null,
       type,
-      content,
-      is_read: false,
-      related_id: extraData.relatedId || extraData.messageId || null,
+      related_id: extraData.relatedId,
     });
+    if (oldNotification) {
+      oldNotification.is_read = false;
+      oldNotification.content = content;
+      oldNotification.createdAt = new Date();
+      await oldNotification.save();
+      notification = oldNotification;
+    } else {
+      // Tạo thông báo trong cơ sở dữ liệu
+      notification = await Notification.create({
+        user_id: userId,
+        from_user: extraData.fromUser || null,
+        type,
+        content,
+        is_read: false,
+        related_id: extraData.relatedId || extraData.messageId || null,
+      });
+    }
 
     // Populate thông tin người gửi
     const notificationWithUser = await notification.populate(
@@ -91,7 +105,8 @@ const getNotifications = async (userId, limit = 20, skip = 0) => {
       .sort({ createdAt: -1 })
       .limit(limit)
       .skip(skip)
-      .populate("from_user", "fullName avatar_url");
+      .populate("from_user", "fullName avatar_url")
+      .populate("user_id", "fullName avatar_url");
   } catch (error) {
     console.error("Error getting notifications:", error);
     throw error;

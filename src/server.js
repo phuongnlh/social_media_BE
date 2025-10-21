@@ -14,8 +14,12 @@ const io = new Server(server, {
     origin: [
       "http://localhost:5173",
       "http://127.0.0.1:5173",
-      "http://192.168.21.145:5173",
-      "https://74027a3132cc.ngrok-free.app",
+      "https://dailyvibe.online",
+      "https://admin.dailyvibe.online",
+      "https://api.dailyvibe.online",
+      `${process.env.FRONTEND_URL}`,
+      `${process.env.ADMIN_URL}`,
+      `${process.env.BACKEND_URL}`,
     ], // Allow Vite dev server
     methods: ["GET", "POST"],
     credentials: true, // Allow cookies

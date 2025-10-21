@@ -1,25 +1,22 @@
 const User = require("../models/user.model");
 const { genPwd, validatePwd } = require("../utils/pwd_utils");
 const { signToken, verifyToken } = require("../utils/jwt_utils");
-const {
-  sendVerificationEmail,
-  sendResetPasswordEmail,
-} = require("../utils/email_utils");
+const { sendVerificationEmail, sendResetPasswordEmail } = require("../utils/email_utils");
 const redisClient = require("../config/database.redis");
 const UserSetting = require("../models/user_settings.model");
 const Friendship = require("../models/friendship.model");
 const speakeasy = require("speakeasy");
 const qrcode = require("qrcode");
+const { default: mongoose } = require("mongoose");
 // Đăng ký tài khoản người dùng mới
 const registerUser = async (req, res) => {
   try {
-    const { fullName, email, password } = req.body;
+    const { fullName, email, password, gender, dateOfBirth, location } = req.body;
     // Kiểm tra email đã tồn tại hay chưa
     const checkUser = await User.findOne({ email });
     if (checkUser) {
-      return res.status(400).json({ message: "Email đã được sử dụng" });
+      return res.status(400).json({ message: "Email already exists." });
     }
-    const username = `${Date.now()}`;
     // Tạo mật khẩu băm và muối
     const { hash, salt } = genPwd(password);
     // Tạo người dùng mới
@@ -28,20 +25,31 @@ const registerUser = async (req, res) => {
       email,
       hash,
       salt,
-      username,
+      gender,
+      dateOfBirth,
+      location,
     }).save();
+    newUser.username = newUser._id.toString();
+    await newUser.save();
     // Tạo token xác thực email
     const token = signToken({ id: newUser._id }, "15m");
 
     // Gửi email xác thực tài khoản
-    await sendVerificationEmail(email, token);
+    try {
+      await sendVerificationEmail(email, token);
+    } catch (err) {
+      await User.findByIdAndDelete(newUser._id);
+      console.error(err);
+      return res.status(500).json({ message: "Failed to send verification email." });
+    }
 
     res.status(201).json({
-      message:
-        "Registration successful! Please check your email to verify your account.",
+      message: "Registration successful! Please check your email to verify your account.",
     });
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    await User.findByIdAndDelete(newUser._id);
+    console.error(err);
+    return res.status(500).json({ message: "Internal server error." });
   }
 };
 
@@ -54,20 +62,60 @@ const verifyEmail = async (req, res) => {
     // Tìm người dùng từ ID trong token
     const user = await User.findById(payload.id);
     if (!user) {
-      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+      return res.status(404).json({ message: "User not found" });
     }
     if (user.EmailVerified) {
-      return res
-        .status(400)
-        .json({ message: "Email đã được xác thực trước đó" });
+      return res.status(400).json({ message: "Email has already been verified!" });
     }
     // Cập nhật trạng thái xác thực email
     user.EmailVerified = true;
     await user.save();
     await createPrivacyDefault(user._id);
-    res.json({ message: "Email đã được xác thực thành công" });
+    res.json({ message: "Email verified successfully!" });
   } catch (err) {
     return res.status(500).json({ message: err.message });
+  }
+};
+
+// Gửi lại email xác thực
+const resendVerification = async (req, res) => {
+  const { email } = req.body;
+  try {
+    // Find user by email
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Email not found in the system",
+      });
+    }
+
+    if (user.EmailVerified) {
+      return res.status(400).json({
+        success: false,
+        message: "Email has already been verified",
+      });
+    }
+
+    // Generate new verification token
+    const token = signToken({ id: user._id }, "15m");
+
+    // Send verification email
+    const result = await sendVerificationEmail(email, token);
+    if (!result) {
+      await User.findByIdAndDelete(user._id);
+      throw new Error("Failed to send verification email.");
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Email verification has been sent",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "An error occurred while sending email",
+    });
   }
 };
 
@@ -78,28 +126,26 @@ const loginUser = async (req, res) => {
     // Tìm người dùng theo email
     const user = await User.findOne({ email: email });
     if (!user) {
-      return res
-        .status(403)
-        .json({ message: "Email hoặc mật khẩu không hợp lệ!" });
+      return res.status(403).json({ message: "Email or Password invalid!" });
     }
 
     // Kiểm tra email đã được xác thực chưa
     if (!user.EmailVerified) {
-      return res
-        .status(403)
-        .json({ message: "Vui lòng xác thực email của bạn." });
+      return res.status(200).json({
+        EmailVerified: false,
+        email: user.email,
+        message: "Please verify your email to continue!",
+      });
     }
 
     // Kiểm tra mật khẩu
     if (!validatePwd(password, user.hash, user.salt)) {
-      return res
-        .status(403)
-        .json({ message: "Email hoặc mật khẩu không hợp lệ!" });
+      return res.status(403).json({ success: false, message: "Email or Password invalid!" });
     }
 
     if (user.twoFAEnabled) {
       // Yêu cầu nhập mã OTP
-      return res.json({ require2FA: true, userId: user._id });
+      return res.status(200).json({ require2FA: true, userId: user._id });
     }
 
     // Tạo access token và refresh token
@@ -117,6 +163,7 @@ const loginUser = async (req, res) => {
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: false,
+      domain: process.env.FRONTEND_URI,
       sameSite: "Lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
@@ -158,9 +205,9 @@ const logoutUser = async (req, res) => {
     await multi.exec();
 
     // Xóa cookie refresh token
-    res.clearCookie("refreshToken", { path: "/" });
+    res.clearCookie("refreshToken");
 
-    res.json({ message: "Đăng xuất thành công" });
+    res.json({ message: "Logout successful" });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -204,7 +251,7 @@ const logoutAllUser = async (req, res) => {
     }
 
     // Xóa cookie
-    res.clearCookie("refreshToken", { path: "/api/v1/" });
+    res.clearCookie("refreshToken");
 
     res.json({ message: "Đã đăng xuất tất cả các phiên thành công" });
   } catch (err) {
@@ -219,18 +266,17 @@ const changePassword = async (req, res) => {
     const { oldPassword, newPassword } = req.body;
 
     if (!oldPassword || !newPassword) {
-      return res.status(400).json({ message: "Thiếu trường mật khẩu" });
+      return res.status(400).json({ success: false, message: "Missing password fields" });
     }
 
     // Tìm người dùng theo ID
     const user = await User.findById(userId);
-    if (!user)
-      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
     // Kiểm tra mật khẩu cũ
     const isValid = validatePwd(oldPassword, user.hash, user.salt);
     if (!isValid) {
-      return res.status(401).json({ message: "Mật khẩu cũ không chính xác" });
+      return res.status(401).json({ success: false, message: "Old password is incorrect" });
     }
 
     // Tạo hash mới từ mật khẩu mới
@@ -239,6 +285,14 @@ const changePassword = async (req, res) => {
     user.salt = salt;
     await user.save();
 
+    const token = req.headers.authorization?.split(" ")[1];
+    const decoded = verifyToken(token);
+    const exp = decoded?.exp;
+    const ttl = exp - Math.floor(Date.now() / 1000); // Thời gian còn lại của token
+
+    if (ttl > 0) {
+      await redisClient.set(`blacklist:${token}`, "true", { EX: ttl });
+    }
     // Đăng xuất tất cả phiên hiện tại (vô hiệu hóa tất cả token)
     const userRefreshTokensSet = `user-sessions:${user._id}`;
     const allTokens = await redisClient.sMembers(userRefreshTokensSet);
@@ -252,11 +306,14 @@ const changePassword = async (req, res) => {
     }
 
     // Xóa cookie của phiên hiện tại
-    res.clearCookie("refreshToken", { path: "/api/v1/" });
+    res.clearCookie("refreshToken");
 
-    res.json({ message: "Mật khẩu đã được thay đổi thành công" });
+    res.json({
+      success: true,
+      message: "Password changed successfully. Please log in again.",
+    });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ success: false, message: err.message });
   }
 };
 
@@ -272,7 +329,7 @@ const forgotPassword = async (req, res) => {
     const resetToken = signToken({ id: user._id }, "15m");
 
     // Tạo liên kết khôi phục mật khẩu
-    const resetLink = `${process.env.BASE_URL}:${process.env.PORT}/api/v1/user/reset-password?token=${resetToken}`;
+    const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
     // Gửi email khôi phục mật khẩu
     await sendResetPasswordEmail(user.email, resetLink);
 
@@ -293,8 +350,7 @@ const resetPassword = async (req, res) => {
     // Tìm người dùng từ ID trong token
     const user = await User.findById(decoded.id);
 
-    if (!user)
-      return res.status(400).json({ message: "Không tìm thấy người dùng" });
+    if (!user) return res.status(400).json({ message: "Không tìm thấy người dùng" });
 
     // Tạo hash mới cho mật khẩu mới
     const { hash, salt } = genPwd(newPassword);
@@ -302,14 +358,14 @@ const resetPassword = async (req, res) => {
     user.salt = salt;
     await user.save();
 
-    res.json({ message: "Đặt lại mật khẩu thành công" });
+    res.status(200).json({ message: "Đặt lại mật khẩu thành công" });
   } catch (err) {
     // Nếu lỗi là do token không hợp lệ hoặc hết hạn
-    if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
-      return res
-        .status(401)
-        .json({ message: "Token không hợp lệ hoặc đã hết hạn" });
-    }
+    // if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
+    //   return res
+    //     .status(401)
+    //     .json({ message: "Token không hợp lệ hoặc đã hết hạn" });
+    // }
     // Các lỗi khác là lỗi server
     console.error(err); // Ghi lại lỗi để debug
     return res.status(500).json({ message: "Đã xảy ra lỗi từ máy chủ." });
@@ -319,7 +375,7 @@ const resetPassword = async (req, res) => {
 const getUser = async (req, res) => {
   const userId = req.user._id; // Đã được xác thực từ middleware
   try {
-    const user = await User.findById(userId).select("-hash -salt -isDeleted");
+    const user = await User.findById(userId).select("-hash -salt -twoFASecret");
     res.status(200).json(user);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -328,9 +384,8 @@ const getUser = async (req, res) => {
 
 const getUserById = async (req, res) => {
   const userId = req.params.userId;
-  console.log("Get user by id: ", userId);
   try {
-    const user = await User.findById(userId).select("-hash -salt -isDeleted");
+    const user = await User.findById(userId).select("-hash -salt -twoFASecret");
     res.status(200).json(user);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -340,22 +395,14 @@ const getUserById = async (req, res) => {
 // Controller upload avatar
 const uploadUserAvatar = async (req, res) => {
   try {
-    if (!req.file) {
-      return res
-        .status(400)
-        .json({ message: "Không có file nào được tải lên" });
-    }
+    const { url } = req.body;
 
     // Cập nhật thông tin user với avatar URL mới
-    const user = await User.findByIdAndUpdate(
-      req.user._id,
-      { avatar_url: req.file.path || req.file.secure_url },
-      { new: true }
-    );
+    const user = await User.findByIdAndUpdate(req.user._id, { avatar_url: url }, { new: true });
 
     return res.status(200).json({
       message: "Cập nhật avatar thành công",
-      avatar_url: req.file.path || req.file.secure_url,
+      avatar_url: url,
     });
   } catch (error) {
     console.error("Lỗi tải lên avatar:", error);
@@ -364,22 +411,13 @@ const uploadUserAvatar = async (req, res) => {
 };
 const uploadBackgroundProfile = async (req, res) => {
   try {
-    if (!req.file) {
-      return res
-        .status(400)
-        .json({ message: "Không có file nào được tải lên" });
-    }
-
+    const { url } = req.body;
     // Cập nhật thông tin user với background URL mới
-    const user = await User.findByIdAndUpdate(
-      req.user._id,
-      { cover_photo_url: req.file.path || req.file.secure_url },
-      { new: true }
-    );
+    const user = await User.findByIdAndUpdate(req.user._id, { cover_photo_url: url }, { new: true });
 
     return res.status(200).json({
       message: "Cập nhật background thành công",
-      cover_photo_url: req.file.path || req.file.secure_url,
+      cover_photo_url: url,
     });
   } catch (error) {
     console.error("Lỗi tải lên background:", error);
@@ -388,19 +426,24 @@ const uploadBackgroundProfile = async (req, res) => {
 };
 const UpdateDataProfile = async (req, res) => {
   const userId = req.user._id;
-  const { username, fullName, email, bio, phone } = req.body;
+  const { username, fullName, email, bio, phone, location, gender } = req.body;
   if (!/^\d{10,12}$/.test(phone)) {
     return res.status(400).json({ message: "Số điện thoại không hợp lệ" });
   }
   try {
-    await User.findByIdAndUpdate(
-      userId,
-      { username, fullName, email, bio, phone },
-      { new: true }
-    );
+    await User.findByIdAndUpdate(userId, { username, fullName, email, bio, phone, location, gender }, { new: true });
 
     res.status(200).json({
       message: "Cập nhật thông tin cá nhân thành công",
+      data: {
+        username,
+        fullName,
+        email,
+        bio,
+        phone,
+        location,
+        gender,
+      },
     });
   } catch (error) {
     console.error("Lỗi cập nhật thông tin cá nhân:", error);
@@ -468,9 +511,7 @@ const updateMultiPrivacySetting = async (req, res) => {
       }));
 
     if (bulkOps.length === 0) {
-      return res
-        .status(400)
-        .json({ message: "Không có key hợp lệ để cập nhật" });
+      return res.status(400).json({ message: "Không có key hợp lệ để cập nhật" });
     }
 
     await UserSetting.bulkWrite(bulkOps);
@@ -497,11 +538,17 @@ const getProfileWithPrivacy = async (req, res) => {
   const profileUserId = req.params.userId;
 
   try {
-    const user = await User.findById(profileUserId).select(
-      "-hash -salt -isDeleted"
-    );
-    if (!user)
-      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    let query = [{ username: profileUserId }];
+
+    // Nếu là ObjectId hợp lệ thì thêm vào query
+    if (mongoose.Types.ObjectId.isValid(profileUserId)) {
+      query.unshift({ _id: profileUserId });
+    }
+
+    const user = await User.findOne({ $or: query }).select("-hash -salt -twoFASecret");
+    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
+
+    if (user.is_deleted) return res.status(404).json({ message: "Nguoi dung da bi xoa" });
 
     const settingsArr = await UserSetting.find({ user_id: profileUserId });
     const privacyMap = {};
@@ -567,13 +614,7 @@ const getProfileWithPrivacy = async (req, res) => {
     }
 
     // Nếu profile là public hoặc friends thì các trường/tab sẽ xét quyền riêng
-    const [
-      canViewPosts,
-      canViewPhotos,
-      canViewVideos,
-      canViewFriends,
-      canViewGroups,
-    ] = await Promise.all([
+    const [canViewPosts, canViewPhotos, canViewVideos, canViewFriends, canViewGroups] = await Promise.all([
       canView("profile.post"),
       canView("profile.photo"),
       canView("profile.video"),
@@ -609,8 +650,7 @@ const generateTwoFASecret = async (req, res) => {
   try {
     const userId = req.user._id;
     const user = await User.findById(userId);
-    if (!user)
-      return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
     const secret = speakeasy.generateSecret({
       name: "MySocialApp",
       length: 20,
@@ -619,7 +659,7 @@ const generateTwoFASecret = async (req, res) => {
       twoFASecret: secret.base32,
     });
     const qr = await qrcode.toDataURL(secret.otpauth_url);
-    return res.status(200).json({ qr });
+    return res.status(200).json({ qr, secret: secret.base32, otpauth_url: secret.otpauth_url });
   } catch (error) {
     console.error("Lỗi kích hoạt 2FA:", error);
     return res.status(500).json({ message: "Lỗi server" });
@@ -631,10 +671,8 @@ const enableTwoFA = async (req, res) => {
     const userId = req.user._id;
     const { token } = req.body;
     const user = await User.findById(userId);
-    if (!user)
-      return res.status(404).json({ message: "Không tìm thấy người dùng" });
-    if (user.twoFAEnabled)
-      return res.status(400).json({ message: "Đã kích hoạt 2FA" });
+    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (user.twoFAEnabled) return res.status(400).json({ message: "Đã kích hoạt 2FA" });
     const verified = speakeasy.totp.verify({
       secret: user.twoFASecret,
       encoding: "base32",
@@ -658,10 +696,8 @@ const verifyTwoFA = async (req, res) => {
     const userId = req.user._id;
     const { token } = req.body;
     const user = await User.findById(userId);
-    if (!user)
-      return res.status(404).json({ message: "Không tìm thấy người dùng" });
-    if (!user.twoFAEnabled)
-      return res.status(400).json({ message: "Chua kích hoạt 2FA" });
+    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user.twoFAEnabled) return res.status(400).json({ message: "Chua kích hoạt 2FA" });
     const verified = speakeasy.totp.verify({
       secret: user.twoFASecret,
       encoding: "base32",
@@ -682,16 +718,14 @@ const verifyTwoFA = async (req, res) => {
 
 const verifyTwoFALogin = async (req, res) => {
   try {
-    const { userId, token } = req.body;
+    const { userId, code } = req.body;
     const user = await User.findById(userId);
-    if (!user)
-      return res.status(404).json({ message: "Không tìm thấy người dùng" });
-    if (!user.twoFAEnabled)
-      return res.status(400).json({ message: "Chua kích hoạt 2FA" });
+    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user.twoFAEnabled) return res.status(400).json({ message: "Chua kích hoạt 2FA" });
     const verified = speakeasy.totp.verify({
       secret: user.twoFASecret,
       encoding: "base32",
-      token,
+      token: code,
       window: 1,
     });
     if (verified) {
@@ -710,6 +744,7 @@ const verifyTwoFALogin = async (req, res) => {
       res.cookie("refreshToken", refreshToken, {
         httpOnly: true,
         secure: false,
+        domain: process.env.FRONTEND_URI,
         sameSite: "Lax",
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
@@ -729,10 +764,8 @@ const disableTwoFA = async (req, res) => {
     const userId = req.user._id;
     const { token } = req.body;
     const user = await User.findById(userId);
-    if (!user)
-      return res.status(404).json({ message: "Không tìm thấy người dùng" });
-    if (!user.twoFAEnabled)
-      return res.status(400).json({ message: "Chua kích hoạt 2FA" });
+    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user.twoFAEnabled) return res.status(400).json({ message: "Chua kích hoạt 2FA" });
     const verified = speakeasy.totp.verify({
       secret: user.twoFASecret,
       encoding: "base32",
@@ -754,6 +787,7 @@ const disableTwoFA = async (req, res) => {
 module.exports = {
   registerUser,
   verifyEmail,
+  resendVerification,
   loginUser,
   logoutUser,
   logoutAllUser,

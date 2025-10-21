@@ -5,6 +5,7 @@ const Post = require("../models/post.model");
 const GroupPost = require("../models/Group/group_post.model");
 const User = require("../models/user.model");
 const notificationService = require("../services/notification.service");
+const adsModel = require("../models/Payment_Ads/ads.model");
 const grpcClient = require("../services/grpcClient");
 const {
   getSocketIO,
@@ -21,8 +22,8 @@ const getGroupPostCommentCount = async (req, res) => {
     const { postgr_id } = req.params;
 
     const count = await Comment.countDocuments({
-      postgr_id,
-      isDeleted: false,
+      $or: [{ post_id: postgr_id }, { postgr_id: postgr_id }],
+      is_deleted: false,
     });
 
     res.status(200).json({ count });
@@ -35,7 +36,7 @@ const getGroupPostCommentCount = async (req, res) => {
 const createComment = async (req, res) => {
   const MAX_DEPTH = 2;
   try {
-    const { post_id, postgr_id, content, parent_comment_id } = req.body;
+    const { post_id, postgr_id, content, parent_comment_id, media } = req.body;
     const user_id = req.user._id;
 
     // Chỉ nhận 1 trong 2: post_id hoặc postgr_id
@@ -43,15 +44,6 @@ const createComment = async (req, res) => {
       return res
         .status(400)
         .json({ error: "Must provide post_id or postgr_id" });
-    }
-
-    let media = undefined;
-    if (req.files && req.files.length > 0) {
-      const file = req.files[0];
-      media = {
-        url: file.path,
-        media_type: file.mimetype.startsWith("video") ? "video" : "image",
-      };
     }
 
     let level = 0,
@@ -102,6 +94,16 @@ const createComment = async (req, res) => {
       reply_to_comment_id = parent_comment_id;
     }
 
+    // Tăng count interaction của ads (nếu có)
+    if (post_id) {
+      await adsModel.updateOne({ post_id: post_id, status: "active" }, [
+        {
+          $set: {
+            total_interactions: { $add: ["$total_interactions", 1] },
+          },
+        },
+      ]);
+    }
     const comment = await Comment.create({
       user_id,
       post_id,
@@ -117,7 +119,6 @@ const createComment = async (req, res) => {
     });
 
     if (media) {
-      console.log("Check image/video for moderation:", media.url);
       await moderationService.checkCommentImage(
         comment._id,
         media.url,
@@ -153,9 +154,12 @@ const createComment = async (req, res) => {
             notificationsNamespace,
             parentComment.user_id,
             "reply_comment",
-            `${commenter.fullName} đã trả lời bình luận của bạn`,
+            `${commenter.fullName} has replied to your comment.`,
             notificationUserSocketMap,
-            { fromUser: commenter._id, relatedId: comment._id }
+            {
+              fromUser: commenter._id,
+              relatedId: comment.post_id || comment.postgr_id,
+            }
           );
         }
       } else {
@@ -166,10 +170,10 @@ const createComment = async (req, res) => {
             await notificationService.createNotificationWithNamespace(
               notificationsNamespace,
               post.user_id,
-              "comment",
-              `${commenter.fullName} đã bình luận vào bài viết của bạn`,
+              "comment_post",
+              `${commenter.fullName} has commented on your post.`,
               notificationUserSocketMap,
-              { fromUser: commenter._id, relatedId: comment._id }
+              { fromUser: commenter._id, relatedId: comment.post_id }
             );
           }
         }
@@ -185,10 +189,10 @@ const createComment = async (req, res) => {
             await notificationService.createNotificationWithNamespace(
               notificationsNamespace,
               groupPost.user_id,
-              "comment",
-              `${commenter.fullName} đã bình luận vào bài viết của bạn trong nhóm ${groupName}`,
+              "comment_post_group",
+              `${commenter.fullName} has commented on your post in group ${groupName}`,
               notificationUserSocketMap,
-              { fromUser: commenter._id, relatedId: comment._id }
+              { fromUser: commenter._id, relatedId: comment.postgr_id }
             );
           }
         }
@@ -207,7 +211,7 @@ const createComment = async (req, res) => {
 const getCommentsOfPost = async (req, res) => {
   try {
     const { post_id, postgr_id } = req.params;
-    const filter = { isDeleted: false };
+    const filter = { is_deleted: false };
     if (post_id) filter.post_id = new mongoose.Types.ObjectId(post_id);
     if (postgr_id) filter.postgr_id = new mongoose.Types.ObjectId(postgr_id);
 
@@ -304,7 +308,7 @@ const getCommentsOfPost = async (req, res) => {
 const countCommentsOfPost = async (req, res) => {
   try {
     const { post_id } = req.params;
-    const count = await Comment.countDocuments({ post_id, isDeleted: false });
+    const count = await Comment.countDocuments({ post_id, is_deleted: false });
     res.status(200).json(count);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -342,7 +346,7 @@ const softDeleteComment = async (req, res) => {
     const user_id = req.user._id;
     const comment = await Comment.findOneAndUpdate(
       { _id: comment_id, user_id },
-      { isDeleted: true, deleted_at: new Date() },
+      { is_deleted: true, deleted_at: new Date() },
       { new: true }
     );
     if (!comment)
@@ -363,7 +367,7 @@ const restoreComment = async (req, res) => {
     const user_id = req.user._id;
     const comment = await Comment.findOneAndUpdate(
       { _id: comment_id, user_id },
-      { isDeleted: false, deleted_at: null },
+      { is_deleted: false, deleted_at: null },
       { new: true }
     );
     if (!comment)
@@ -398,7 +402,7 @@ const reactToComment = async (req, res) => {
         // Lấy danh sách user đã react (trừ chủ comment)
         const reactions = await CommentReaction.find({ comment_id }).populate(
           "user_id",
-          "username"
+          "username fullName"
         );
         // Lọc ra user react khác chủ comment
         const otherReactUsers = reactions.filter(
@@ -412,18 +416,20 @@ const reactToComment = async (req, res) => {
           const otherCount = otherReactUsers.length - 1;
           let contentNoti = "";
           if (otherCount > 0) {
-            contentNoti = `${currentUser.user_id.username} và ${otherCount} người khác đã bày tỏ cảm xúc bình luận của bạn`;
+            contentNoti = `${currentUser.user_id.fullName} and ${otherCount} others have reacted to your comment.`;
           } else {
-            contentNoti = `${currentUser.user_id.username} đã bày tỏ cảm xúc bình luận của bạn`;
+            contentNoti = `${currentUser.user_id.fullName} has reacted to your comment.`;
           }
           const io = getSocketIO();
-          const userSocketMap = getUserSocketMap();
-          await notificationService.createNotification(
-            io,
+          const notificationsNamespace = io.of("/notifications");
+          const notificationUserSocketMap = getNotificationUserSocketMap();
+          await notificationService.createNotificationWithNamespace(
+            notificationsNamespace,
             comment.user_id,
             "comment_reaction",
             contentNoti,
-            userSocketMap
+            notificationUserSocketMap,
+            { fromUser: comment.user_id, relatedId: comment._id }
           );
         }
       }

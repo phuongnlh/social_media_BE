@@ -32,7 +32,7 @@ const createPrivateChannel = async (req, res) => {
     if (channel) {
       channel.members.forEach((member) => {
         if (member.userId.toString() === currentUserId) {
-          member.isDelete = false;
+          member.is_deleted = false;
         }
       });
       await channel.save();
@@ -67,7 +67,7 @@ const createPrivateChannel = async (req, res) => {
 // Tạo channel Group với nhiều thành viên
 const createGroupChannel = async (req, res) => {
   try {
-    const { name, memberIds } = req.body;
+    const { name, memberIds, url } = req.body;
     const createdBy = req.user._id.toString();
 
     // Tạo channelId unique
@@ -86,9 +86,9 @@ const createGroupChannel = async (req, res) => {
         }
       });
     }
-    const avatar = req.file
-      ? req.file.path
-      : "https://res.cloudinary.com/doxtbwyyc/image/upload/v1754065338/image_copy_yjz7dz.png";
+    const avatar = url
+      ? url
+      : "https://minio.dailyvibe.online/dailyvibe/channels/channel-avatar.jpg";
 
     const channel = await channelModel.create({
       channelId,
@@ -380,7 +380,7 @@ const getUserChannels = async (req, res) => {
     const channels = await channelModel
       .find({
         "members.userId": userId,
-        "members.isDelete": { $ne: true },
+        "members.is_deleted": { $ne: true },
       })
       .populate("members.userId", "fullName avatar_url email")
       .sort({ updatedAt: -1 });
@@ -558,7 +558,13 @@ const updateGroupAvatar = async (req, res) => {
   try {
     const { channelId } = req.params;
     const userId = req.user._id.toString();
-
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({
+        success: false,
+        message: "No avatar file uploaded",
+      });
+    }
     const channel = await channelModel.findOne({ channelId });
     if (!channel) {
       return res.status(404).json({
@@ -582,15 +588,8 @@ const updateGroupAvatar = async (req, res) => {
         message: "Only admins can update group avatar",
       });
     }
-    const avatar = req.file.path;
-    if (!avatar) {
-      return res.status(400).json({
-        success: false,
-        message: "No avatar file uploaded",
-      });
-    }
 
-    channel.avatar = avatar;
+    channel.avatar = url;
     await channel.save();
 
     res.status(200).json({
@@ -1003,7 +1002,7 @@ const deleteChat = async (req, res) => {
 
     channel.members = channel.members.map((member) => {
       if (member.userId.toString() === userId.toString()) {
-        return { ...member, isDelete: true, deletedAt: new Date() };
+        return { ...member, is_deleted: true, deletedAt: new Date() };
       }
       return member;
     });
@@ -1038,7 +1037,7 @@ const restoreChat = async (req, res) => {
 
     channel.members = channel.members.map((member) => {
       if (member.userId.toString() === userId.toString()) {
-        return { ...member, isDelete: false };
+        return { ...member, is_deleted: false };
       }
       return member;
     });

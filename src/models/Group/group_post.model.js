@@ -5,6 +5,7 @@ const groupPostSchema = new mongoose.Schema({
   user_id: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   content: { type: String },
   status: { type: String, enum: ["approved", "pending", "rejected"], default: "approved" },
+  viewCount: { type: Number, default: 0 },
   approved_by: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   approved_at: { type: Date, default: null },
   is_deleted: { type: Boolean, default: false },

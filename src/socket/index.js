@@ -1,7 +1,6 @@
 const Message = require("../models/message.model");
 const Channel = require("../models/Chat/channel.model"); // Thêm import model Channel
 const Notification = require("../models/notification.model");
-const { uploadToCloudinary } = require("../utils/upload_utils");
 const notificationService = require("../services/notification.service");
 const { setSocketIO } = require("./io-instance");
 const redisClient = require("../config/database.redis");
@@ -39,20 +38,11 @@ module.exports = (io) => {
       try {
         const { from, channelId, content, media = [] } = data;
 
-        let mediaPayload = [];
-        if (media.length > 0) {
-          const uploaded = await uploadToCloudinary(media);
-          mediaPayload = uploaded.map((file) => ({
-            url: file.secure_url,
-            type: file.resource_type === "video" ? "video" : "image",
-          }));
-        }
-
         const message = await Message.create({
           from,
           channelId,
           content,
-          media: mediaPayload,
+          media,
           readBy: [
             {
               userId: from, // Người gửi đã "đọc" message của chính họ

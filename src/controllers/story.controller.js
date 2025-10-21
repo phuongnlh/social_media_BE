@@ -5,7 +5,7 @@ const storyViewModel = require("../models/Story/storyView.model");
 const createStory = async (req, res) => {
   try {
     const userId = req.user._id;
-    const { storyText, backgroundColor, textColor, privacy } = req.body;
+    const { storyText, backgroundColor, textColor, privacy, image, video } = req.body;
 
     const newStory = new storyModel({
       userId,
@@ -13,8 +13,8 @@ const createStory = async (req, res) => {
       backgroundColor,
       textColor,
       privacy,
-      imageUrl: req.files?.image ? req.files.image[0].path : null,
-      videoUrl: req.files?.video ? req.files.video[0].path : null,
+      imageUrl: image ? image : null,
+      videoUrl: video ? video : null,
     });
 
     await newStory.save();
@@ -41,7 +41,7 @@ const getStories = async (req, res) => {
     const friendIds = friendships.map((f) =>
       f.user_id_1.toString() === userId.toString() ? f.user_id_2 : f.user_id_1
     );
-    friendIds.push(userId); // bao gồm cả chính mình
+    friendIds.push(userId);
     // query story tạo trong vòng 24h
     const stories = await storyModel
       .find({ createdAt: { $gte: cutoff }, userId: { $in: friendIds } })
