@@ -27,20 +27,13 @@ app.use(
       "https://api.dailyvibe.local",
     ],
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "X-Requested-With",
-      "ngrok-skip-browser-warning",
-      "X-Client-IP",
-    ],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "X-Client-IP"],
     credentials: true, // Allow cookies and authorization headers
   })
 );
-app.use(
-  "/api/v1/payment/stripe/webhook",
-  express.raw({ type: "application/json" })
-);
+app.use("/api/v1/payment/stripe/webhook", express.raw({ type: "application/json" }));
+
+app.use("api/v1/payment/momo/webhook", express.json());
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

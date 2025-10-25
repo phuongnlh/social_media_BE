@@ -11,7 +11,7 @@ const { default: mongoose } = require("mongoose");
 // Đăng ký tài khoản người dùng mới
 const registerUser = async (req, res) => {
   try {
-    const { fullName, email, password, gender, dateOfBirth } = req.body;
+    const { fullName, email, password, gender, dateOfBirth, location } = req.body;
     // Kiểm tra email đã tồn tại hay chưa
     const checkUser = await User.findOne({ email });
     if (checkUser) {
@@ -27,6 +27,7 @@ const registerUser = async (req, res) => {
       salt,
       gender,
       dateOfBirth,
+      location,
     }).save();
     newUser.username = newUser._id.toString();
     await newUser.save();
@@ -658,7 +659,7 @@ const generateTwoFASecret = async (req, res) => {
       twoFASecret: secret.base32,
     });
     const qr = await qrcode.toDataURL(secret.otpauth_url);
-    return res.status(200).json({ qr });
+    return res.status(200).json({ qr, secret: secret.base32, otpauth_url: secret.otpauth_url });
   } catch (error) {
     console.error("Lỗi kích hoạt 2FA:", error);
     return res.status(500).json({ message: "Lỗi server" });

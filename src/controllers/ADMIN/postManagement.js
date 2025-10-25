@@ -191,6 +191,27 @@ const getAllPosts = async (req, res) => {
         },
       },
 
+      ...(hasMedia !== "" && hasMedia !== undefined && hasMedia !== null
+        ? [
+            {
+              $lookup: {
+                from: "postmedias",
+                localField: "_id",
+                foreignField: "post_id",
+                as: "mediaCheck",
+              },
+            },
+            {
+              $match: {
+                $expr:
+                  hasMedia === "true"
+                    ? { $gt: [{ $size: { $ifNull: ["$mediaCheck", []] } }, 0] }
+                    : { $eq: [{ $size: { $ifNull: ["$mediaCheck", []] } }, 0] },
+              },
+            },
+          ]
+        : []),
+
       // Project only needed fields
       {
         $project: {
@@ -227,28 +248,6 @@ const getAllPosts = async (req, res) => {
         },
       },
     ];
-
-    // Handle media filter in aggregation if needed
-    if (hasMedia !== "") {
-      const mediaCondition = hasMedia === "true" ? { $ne: [] } : { $eq: [] };
-
-      // Add media lookup before the match stage
-      aggregationPipeline.splice(-3, 0, {
-        $lookup: {
-          from: "postmedias",
-          localField: "_id",
-          foreignField: "post_id",
-          as: "mediaCheck",
-        },
-      });
-
-      // Add media filter to match conditions
-      aggregationPipeline.splice(-2, 0, {
-        $match: {
-          mediaCheck: mediaCondition,
-        },
-      });
-    }
 
     const posts = await postModel.aggregate(aggregationPipeline);
 

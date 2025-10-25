@@ -10,12 +10,12 @@ const stripe = new Stripe(process.env.STRIPE_TEST_SK);
 
 // MoMo configuration
 const MOMO_CONFIG = {
-  partnerCode: 'MOMOJGOI20250919_TEST',
+  partnerCode: "MOMOJGOI20250919_TEST",
   accessKey: process.env.MOMO_ACCESS_KEY,
   secretKey: process.env.MOMO_SECRET_KEY,
   endpoint: process.env.MOMO_ENDPOINT,
   requestType: "captureWallet",
-  lang: 'vi'
+  lang: "vi",
 };
 
 // Create checkout session cho ads (support both Stripe and MoMo)
@@ -190,6 +190,7 @@ const createMoMoSession = async (req, res, ads, payment, amount) => {
     });
     // Make request to MoMo
     const momoResponse = await makeMoMoRequest(requestBody);
+    console.log("Ipn Url:", ipnUrl);
 
     if (momoResponse.resultCode === 0) {
       // Update payment record with MoMo info
