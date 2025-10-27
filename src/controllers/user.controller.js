@@ -631,7 +631,7 @@ const getProfileWithPrivacy = async (req, res) => {
       avatar_url: user.avatar_url,
       cover_photo_url: user.cover_photo_url,
       location: user.location,
-      bio: user.bio
+      bio: user.bio,
       email: (await canView("profile.email")) ? user.email : null,
     };
 
