@@ -168,7 +168,7 @@ const loginUser = async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
     // Trả về access token cho client
-    res.status(200).json({ accessToken });
+    res.status(200).json({ accessToken, refreshToken });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
@@ -253,7 +253,7 @@ const logoutAllUser = async (req, res) => {
     // Xóa cookie
     res.clearCookie("refreshToken");
 
-    res.json({ message: "Đã đăng xuất tất cả các phiên thành công" });
+    res.status(200).json({ message: "Logout all sessions successful" });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -578,6 +578,7 @@ const getProfileWithPrivacy = async (req, res) => {
           fullName: user.fullName,
           avatar_url: user.avatar_url,
           cover_photo_url: user.cover_photo_url,
+          location: user.location,
           bio: null,
           email: null,
         },
@@ -600,6 +601,7 @@ const getProfileWithPrivacy = async (req, res) => {
             fullName: user.fullName,
             avatar_url: user.avatar_url,
             cover_photo_url: user.cover_photo_url,
+            location: user.location,
             bio: null,
             email: null,
           },
@@ -628,7 +630,8 @@ const getProfileWithPrivacy = async (req, res) => {
       fullName: user.fullName,
       avatar_url: user.avatar_url,
       cover_photo_url: user.cover_photo_url,
-      bio: (await canView("profile")) ? user.bio : null,
+      location: user.location,
+      bio: user.bio
       email: (await canView("profile.email")) ? user.email : null,
     };
 
@@ -749,9 +752,9 @@ const verifyTwoFALogin = async (req, res) => {
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
       // Trả về access token cho client
-      res.status(200).json({ accessToken });
+      res.status(200).json({ accessToken, refreshToken });
     } else {
-      return res.status(400).json({ message: "Mã xác thực 2FA không hợp lệ" });
+      return res.status(400).json({ message: "TwoFA code isn't valid" });
     }
   } catch (error) {
     console.error("Lỗi kích hoạt 2FA:", error);

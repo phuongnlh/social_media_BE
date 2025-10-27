@@ -2,15 +2,11 @@ require("dotenv").config();
 const jwt = require("jsonwebtoken");
 const redisClient = require("../config/database.redis");
 const { signToken } = require("../utils/jwt_utils");
-const publicKey = require("fs").readFileSync(
-  "./src/config/public_key.pem",
-  "utf-8"
-);
+const publicKey = require("fs").readFileSync("./src/config/public_key.pem", "utf-8");
 
 const refreshAccessToken = async (req, res) => {
   const refreshToken = req.cookies.refreshToken;
-  if (!refreshToken)
-    return res.status(403).json({ message: "No refresh token" });
+  if (!refreshToken) return res.status(403).json({ message: "No refresh token" });
 
   try {
     const payload = jwt.verify(refreshToken, publicKey, {
@@ -27,9 +23,7 @@ const refreshAccessToken = async (req, res) => {
         await Promise.all(keys.map((key) => redisClient.del(key)));
       }
 
-      return res
-        .status(403)
-        .json({ message: "Possible replay attack. All sessions terminated." });
+      return res.status(403).json({ message: "Possible replay attack. All sessions terminated." });
     }
 
     const newAccessToken = signToken({ id: payload.id }, "15m");
@@ -54,7 +48,7 @@ const refreshAccessToken = async (req, res) => {
     // ✅ Token hợp lệ → Xóa cái cũ
     await redisClient.del(key);
 
-    res.status(200).json({ accessToken: newAccessToken });
+    res.status(200).json({ accessToken: newAccessToken, refreshToken: newRefreshToken });
   } catch (err) {
     res.status(403).json({ message: "Invalid refresh token", err });
   }
