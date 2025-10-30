@@ -3,6 +3,7 @@ const Comment = require("../models/Comment_Reaction/comment.model");
 const CommentReaction = require("../models/Comment_Reaction/comment_reactions.model");
 const Post = require("../models/post.model");
 const GroupPost = require("../models/Group/group_post.model");
+const Group = require("../models/Group/group.model");
 const User = require("../models/user.model");
 const notificationService = require("../services/notification.service");
 const adsModel = require("../models/Payment_Ads/ads.model");
@@ -36,7 +37,7 @@ const getGroupPostCommentCount = async (req, res) => {
 const createComment = async (req, res) => {
   const MAX_DEPTH = 2;
   try {
-    const { post_id, postgr_id, content, parent_comment_id, media } = req.body;
+    const { post_id = null, postgr_id = null, content, parent_comment_id, media } = req.body;
     const user_id = req.user._id;
 
     // Chỉ nhận 1 trong 2: post_id hoặc postgr_id

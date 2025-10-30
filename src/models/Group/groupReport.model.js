@@ -39,44 +39,12 @@ const groupReportSchema = new mongoose.Schema(
       maxlength: 500,
     },
 
-    // Mức độ nghiêm trọng
-    severity: {
-      type: String,
-      enum: ["low", "medium", "high", "critical"],
-      default: "medium"
-    },
-
     // Trạng thái xử lý
     status: {
       type: String,
-      enum: ["pending", "investigating", "resolved", "dismissed"],
+      enum: ["pending", "resolved", "dismissed"],
       default: "pending",
     },
-
-    // Admin xử lý
-    assignedTo: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-    },
-
-    // Ghi chú của admin
-    adminNotes: [
-      {
-        admin: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User",
-          required: true,
-        },
-        note: {
-          type: String,
-          required: true,
-        },
-        createdAt: {
-          type: Date,
-          default: Date.now,
-        },
-      },
-    ],
 
     // Hành động đã thực hiện
     actionTaken: {
@@ -85,25 +53,11 @@ const groupReportSchema = new mongoose.Schema(
         "none",
         "warning_sent",
         "group_deleted",
-        "creator_warned",
       ],
       default: "none",
     },
 
-    // Kết quả xử lý
-    resolution: {
-      type: String,
-      maxlength: 500,
-    },
-
-    // Thời gian xử lý
     resolvedAt: Date,
-
-    // Người xử lý
-    resolvedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-    },
   },
   {
     timestamps: true,
@@ -116,10 +70,10 @@ groupReportSchema.index(
   {
     unique: true,
     partialFilterExpression: {
-      status: { $in: ["pending", "investigating"] }
+      status: { $in: "pending" }
     }
   }
-); // Một người dùng chỉ có thể báo cáo cùng một nhóm một lần khi báo cáo đang chờ xử lý hoặc đang điều tra
+); // Một người dùng chỉ có thể báo cáo cùng một nhóm một lần khi báo cáo đang chờ xử lý
 groupReportSchema.index({ status: 1, createdAt: -1 });
 groupReportSchema.index({ reportedGroup: 1, createdAt: -1 });
 groupReportSchema.index({ assignedTo: 1, status: 1 });

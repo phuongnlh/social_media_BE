@@ -18,6 +18,7 @@ const emailTemplateController = require("../controllers/ADMIN/emailTemplate.cont
 const { refreshAccessAdminToken, loginAdmin, logoutAdmin } = require("../controllers/ADMIN/authAdmin.controller");
 const { isAdmin } = require("../middlewares/auth");
 const reportController = require("../controllers/ADMIN/report.controller");
+const groupAdminController = require("../controllers/ADMIN/groupAdmin.controller");
 const minioClient = require("../config/minioClient.storage");
 const router = express.Router();
 
@@ -82,5 +83,19 @@ router.post("/email-templates", isAdmin, emailTemplateController.saveTemplate);
 //*==============================================================
 router.get("/posts/stats", isAdmin, postController.getPostStats);
 router.get("/posts", isAdmin, postController.getAllPosts);
+
+
+//*==============================================================
+//*================== ADMIN Group MANAGEMENT ====================
+//*==============================================================
+router.get("/groups", groupAdminController.getAllGroupsWithStats);
+router.get("/groups/reports", groupAdminController.getAllGroupReportsByStatus);
+router.get("/groups/statistics", groupAdminController.getGroupStatistics);
+router.get("/groups/reports/resolved", groupAdminController.getAllResolvedGroupReports);
+router.patch("/groups/:groupId/reports/dismiss", groupAdminController.dismissAllPendingReportsOfGroup);
+router.post("/groups/:groupId/reports/send-warning", groupAdminController.sendWarningToGroup);
+router.patch("/groups/:groupId/mark-investigating", groupAdminController.markGroupAsInvestigating);
+router.get("/groups/:group_id/posts", groupAdminController.getAllPostsInGroupForAdmin);
+router.delete("/groups/:groupId", groupAdminController.deleteGroupForSevereViolation);
 
 module.exports = router;
