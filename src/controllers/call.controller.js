@@ -94,7 +94,6 @@ const genUserToken = async (req, res) => {
         token,
         appId: APP_ID,
         channelName,
-        uid,
         userId,
         expiredTs: privilegeExpiredTs,
       },
