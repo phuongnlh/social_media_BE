@@ -33,7 +33,7 @@ app.use(
 );
 app.use("/api/v1/payment/stripe/webhook", express.raw({ type: "application/json" }));
 
-app.use("api/v1/payment/momo/webhook", express.json());
+app.use("/api/v1/payment/momo/webhook", express.raw({ type: "application/json" }));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
