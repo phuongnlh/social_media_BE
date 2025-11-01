@@ -9,10 +9,11 @@ const dayjs = require("dayjs");
 const userSocketMap = new Map(); // userId => socket.id
 const messageUserSocketMap = new Map(); // userId => socket.id cho messaging
 const notificationUserSocketMap = new Map(); // userId => socket.id cho notifications
+const callUserSocketMap = new Map(); // userId => socket.id cho calls
 const userRefreshTokensSet = `user-online`;
 module.exports = (io) => {
   // Make IO instance available globally
-  setSocketIO(io, userSocketMap, notificationUserSocketMap);
+  setSocketIO(io, userSocketMap, notificationUserSocketMap, callUserSocketMap);
 
   // ===== MESSAGING NAMESPACE =====
   const messagesNamespace = io.of("/messages");
@@ -51,10 +52,7 @@ module.exports = (io) => {
           ],
         });
 
-        const newMessage = await Message.findById(message._id).populate(
-          "from",
-          "fullName avatar_url"
-        );
+        const newMessage = await Message.findById(message._id).populate("from", "fullName avatar_url");
 
         // Tìm channel để lấy danh sách thành viên
         const channel = await Channel.findOne({ channelId });
@@ -72,9 +70,7 @@ module.exports = (io) => {
         );
 
         // Gửi tin nhắn cho tất cả thành viên trong channel (trừ người gửi)
-        const recipientMembers = channel.members.filter(
-          (member) => member.userId.toString() !== from.toString()
-        );
+        const recipientMembers = channel.members.filter((member) => member.userId.toString() !== from.toString());
 
         // Thêm thông tin channel vào message để client biết message thuộc kênh nào
         const messageWithChannel = {
@@ -90,9 +86,7 @@ module.exports = (io) => {
 
           if (memberSocketIds) {
             for (const socketId of memberSocketIds) {
-              messagesNamespace
-                .to(socketId)
-                .emit("receive_message", messageWithChannel);
+              messagesNamespace.to(socketId).emit("receive_message", messageWithChannel);
             }
           }
         }
@@ -103,10 +97,7 @@ module.exports = (io) => {
         });
 
         // Xác nhận gửi thành công cho người gửi
-        const populatedMessage = await Message.findById(message._id).populate(
-          "from",
-          "fullName avatar_url"
-        );
+        const populatedMessage = await Message.findById(message._id).populate("from", "fullName avatar_url");
         socket.emit("message_sent", populatedMessage);
       } catch (err) {
         console.error("Send message error:", err);
@@ -136,11 +127,7 @@ module.exports = (io) => {
         await redisClient.sRem("online_users", userId);
 
         // Ghi last active (ISO string hoặc timestamp)
-        await redisClient.hSet(
-          "user:lastActive",
-          userId,
-          dayjs().toISOString()
-        );
+        await redisClient.hSet("user:lastActive", userId, dayjs().toISOString());
 
         console.log(`❌ User ${userId} offline, last active saved`);
       }
@@ -185,15 +172,14 @@ module.exports = (io) => {
       try {
         const { userId, type, content, relatedId } = data;
 
-        const notification =
-          await notificationService.createNotificationWithNamespace(
-            notificationsNamespace,
-            userId,
-            type,
-            content,
-            notificationUserSocketMap,
-            { relatedId }
-          );
+        const notification = await notificationService.createNotificationWithNamespace(
+          notificationsNamespace,
+          userId,
+          type,
+          content,
+          notificationUserSocketMap,
+          { relatedId }
+        );
 
         socket.emit("notification_sent", { success: true, notification });
       } catch (err) {
@@ -207,17 +193,13 @@ module.exports = (io) => {
       try {
         const { notificationId } = data;
 
-        const notification = await notificationService.markAsRead(
-          notificationId
-        );
+        const notification = await notificationService.markAsRead(notificationId);
 
         if (notification) {
           socket.emit("notification_updated", notification);
 
           // Cập nhật unread count
-          const unreadCount = await notificationService.getUnreadCount(
-            socket.userId
-          );
+          const unreadCount = await notificationService.getUnreadCount(socket.userId);
           socket.emit("unread_count_update", unreadCount);
         } else {
           socket.emit("error_notification", "Không tìm thấy thông báo");
@@ -243,21 +225,14 @@ module.exports = (io) => {
         if (userSocketIds) {
           for (const socketId of userSocketIds) {
             if (socketId !== socket.id) {
-              notificationsNamespace
-                .to(socketId)
-                .emit("notifications_refresh_needed");
-              notificationsNamespace
-                .to(socketId)
-                .emit("unread_count_update", 0);
+              notificationsNamespace.to(socketId).emit("notifications_refresh_needed");
+              notificationsNamespace.to(socketId).emit("unread_count_update", 0);
             }
           }
         }
       } catch (err) {
         console.error("Mark all notifications error:", err);
-        socket.emit(
-          "error_notification",
-          "Không thể cập nhật tất cả thông báo"
-        );
+        socket.emit("error_notification", "Không thể cập nhật tất cả thông báo");
       }
     });
 
@@ -267,11 +242,7 @@ module.exports = (io) => {
         const { limit = 20, skip = 0 } = data;
         const userId = socket.userId;
 
-        const notifications = await notificationService.getNotifications(
-          userId,
-          limit,
-          skip
-        );
+        const notifications = await notificationService.getNotifications(userId, limit, skip);
 
         socket.emit("notifications_list", notifications);
       } catch (err) {
@@ -280,19 +251,33 @@ module.exports = (io) => {
       }
     });
 
-    // ===== CALL EVENTS =====
+    socket.on("disconnect", () => {
+      const userId = socket.userId;
+      if (userId && notificationUserSocketMap.has(userId)) {
+        const sockets = notificationUserSocketMap.get(userId);
+        sockets.delete(socket.id);
+        if (sockets.size === 0) {
+          notificationUserSocketMap.delete(userId);
+        }
+      }
+    });
+  });
 
+  // ===== CALL EVENTS =====
+  const callNamespace = io.of("/calls");
+  callNamespace.on("connection", (socket) => {
+    socket.on("register_call", async ({ userId }) => {
+      socket.userId = userId.toString();
+
+      if (!callUserSocketMap.has(userId)) {
+        callUserSocketMap.set(userId, new Set());
+      }
+      callUserSocketMap.get(userId).add(socket.id);
+    });
     // Gửi thông báo call đến participants
     socket.on("send_call_notification", async (data) => {
       try {
-        const {
-          channelCallId,
-          callType,
-          callerInfo,
-          participants,
-          chatType,
-          chatInfo,
-        } = data;
+        const { channelCallId, callType, callerInfo, participants, chatType, chatInfo } = data;
         const callerId = socket.userId;
 
         if (chatType === "group" && chatInfo?._id) {
@@ -312,21 +297,17 @@ module.exports = (io) => {
 
         for (const participantId of participants) {
           if (participantId.toString() !== callerId) {
-            const participantSocketIds = notificationUserSocketMap.get(
-              participantId.toString()
-            );
+            const participantSocketIds = notificationUserSocketMap.get(participantId.toString());
             if (participantSocketIds) {
               for (const participantSocketId of participantSocketIds) {
-                notificationsNamespace
-                  .to(participantSocketId)
-                  .emit("incoming_call", {
-                    channelCallId,
-                    callType,
-                    callerInfo,
-                    chatType,
-                    chatInfo,
-                    timestamp: Date.now(),
-                  });
+                notificationsNamespace.to(participantSocketId).emit("incoming_call", {
+                  channelCallId,
+                  callType,
+                  callerInfo,
+                  chatType,
+                  chatInfo,
+                  timestamp: Date.now(),
+                });
               }
             }
           }
@@ -358,8 +339,7 @@ module.exports = (io) => {
     // Call rejected
     socket.on("call_rejected", async (data) => {
       try {
-        const { channelCallId, rejectedBy, callerInfo, isGroupCall, chatInfo } =
-          data;
+        const { channelCallId, rejectedBy, callerInfo, isGroupCall, chatInfo } = data;
 
         if (isGroupCall) {
           notificationsNamespace.emit("call_rejected_by_user", {
@@ -369,24 +349,18 @@ module.exports = (io) => {
             chatInfo,
           });
 
-          const callerSocketIds = notificationUserSocketMap.get(
-            callerInfo.id.toString()
-          );
+          const callerSocketIds = notificationUserSocketMap.get(callerInfo.id.toString());
           if (callerSocketIds) {
             for (const callerSocketId of callerSocketIds) {
-              notificationsNamespace
-                .to(callerSocketId)
-                .emit("call_rejected_by_user", {
-                  channelCallId,
-                  rejectedBy,
-                  isGroupCall: true,
-                });
+              notificationsNamespace.to(callerSocketId).emit("call_rejected_by_user", {
+                channelCallId,
+                rejectedBy,
+                isGroupCall: true,
+              });
             }
           }
         } else {
-          const callerSocketIds = notificationUserSocketMap.get(
-            callerInfo.id.toString()
-          );
+          const callerSocketIds = notificationUserSocketMap.get(callerInfo.id.toString());
           if (callerSocketIds) {
             for (const callerSocketId of callerSocketIds) {
               notificationsNamespace.to(callerSocketId).emit("call_ended", {
@@ -421,9 +395,7 @@ module.exports = (io) => {
 
           await redisClient.sRem(participantsKey, userId);
 
-          const remainingParticipants = await redisClient.sCard(
-            participantsKey
-          );
+          const remainingParticipants = await redisClient.sCard(participantsKey);
 
           if (remainingParticipants === 0) {
             await redisClient.del(callInfoKey, participantsKey);
@@ -431,17 +403,13 @@ module.exports = (io) => {
             const channel = await Channel.findOne({ _id: chatId });
             if (channel?.members) {
               for (const member of channel.members) {
-                const memberSocketIds = notificationUserSocketMap.get(
-                  member.userId.toString()
-                );
+                const memberSocketIds = notificationUserSocketMap.get(member.userId.toString());
                 if (memberSocketIds) {
                   for (const socketId of memberSocketIds) {
-                    notificationsNamespace
-                      .to(socketId)
-                      .emit("group_call_ended", {
-                        channelCallId,
-                        chatId,
-                      });
+                    notificationsNamespace.to(socketId).emit("group_call_ended", {
+                      channelCallId,
+                      chatId,
+                    });
                   }
                 }
               }
@@ -451,19 +419,15 @@ module.exports = (io) => {
             const channel = await Channel.findOne({ _id: chatId });
             if (channel?.members) {
               for (const member of channel.members) {
-                const memberSocketIds = notificationUserSocketMap.get(
-                  member.userId.toString()
-                );
+                const memberSocketIds = notificationUserSocketMap.get(member.userId.toString());
                 if (memberSocketIds) {
                   for (const socketId of memberSocketIds) {
-                    notificationsNamespace
-                      .to(socketId)
-                      .emit("active_group_call", {
-                        channelCallId,
-                        callType: callInfo.callType,
-                        chatId,
-                        participantsCount: remainingParticipants,
-                      });
+                    notificationsNamespace.to(socketId).emit("active_group_call", {
+                      channelCallId,
+                      callType: callInfo.callType,
+                      chatId,
+                      participantsCount: remainingParticipants,
+                    });
                   }
                 }
               }
@@ -489,17 +453,13 @@ module.exports = (io) => {
 
         for (const participantId of participants) {
           if (participantId.toString() !== endedByUserId) {
-            const participantSocketIds = notificationUserSocketMap.get(
-              participantId.toString()
-            );
+            const participantSocketIds = notificationUserSocketMap.get(participantId.toString());
             if (participantSocketIds) {
               for (const participantSocketId of participantSocketIds) {
-                notificationsNamespace
-                  .to(participantSocketId)
-                  .emit("call_ended", {
-                    channelCallId,
-                    endedBy: endedByUserId,
-                  });
+                notificationsNamespace.to(participantSocketId).emit("call_ended", {
+                  channelCallId,
+                  endedBy: endedByUserId,
+                });
               }
             }
           }
@@ -512,11 +472,11 @@ module.exports = (io) => {
     // Xử lý disconnect cho notifications
     socket.on("disconnect", () => {
       const userId = socket.userId;
-      if (userId && notificationUserSocketMap.has(userId)) {
-        const sockets = notificationUserSocketMap.get(userId);
+      if (userId && callUserSocketMap.has(userId)) {
+        const sockets = callUserSocketMap.get(userId);
         sockets.delete(socket.id);
         if (sockets.size === 0) {
-          notificationUserSocketMap.delete(userId);
+          callUserSocketMap.delete(userId);
         }
       }
     });
