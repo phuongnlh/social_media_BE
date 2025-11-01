@@ -8,7 +8,7 @@ let notificationUserSocketMap = new Map();
 let callUserSocketMap = new Map();
 
 // Thiết lập instance Socket.IO để sử dụng toàn cục
-const setSocketIO = (socketIO, socketMap, notificationSocketMap, callSocketMap) => {
+const setSocketIO = (socketIO, socketMap, notificationSocketMap, callUserSocketMap) => {
   io = socketIO;
   if (socketMap) {
     userSocketMap = socketMap;
@@ -16,8 +16,8 @@ const setSocketIO = (socketIO, socketMap, notificationSocketMap, callSocketMap) 
   if (notificationSocketMap) {
     notificationUserSocketMap = notificationSocketMap;
   }
-  if (callSocketMap) {
-    callUserSocketMap = callSocketMap;
+  if (callUserSocketMap) {
+    callUserSocketMap = callUserSocketMap;
   }
   if (io) {
     io.notificationUserSocketMap = notificationUserSocketMap;

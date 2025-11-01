@@ -297,10 +297,10 @@ module.exports = (io) => {
 
         for (const participantId of participants) {
           if (participantId.toString() !== callerId) {
-            const participantSocketIds = notificationUserSocketMap.get(participantId.toString());
+            const participantSocketIds = callUserSocketMap.get(participantId.toString());
             if (participantSocketIds) {
               for (const participantSocketId of participantSocketIds) {
-                notificationsNamespace.to(participantSocketId).emit("incoming_call", {
+                callNamespace.to(participantSocketId).emit("incoming_call", {
                   channelCallId,
                   callType,
                   callerInfo,
@@ -326,7 +326,7 @@ module.exports = (io) => {
         const { channelCallId, userInfo } = data;
         const userId = socket.userId;
 
-        notificationsNamespace.emit("user_joined_call", {
+        callNamespace.emit("user_joined_call", {
           channelCallId,
           userInfo,
           userId,
@@ -342,17 +342,17 @@ module.exports = (io) => {
         const { channelCallId, rejectedBy, callerInfo, isGroupCall, chatInfo } = data;
 
         if (isGroupCall) {
-          notificationsNamespace.emit("call_rejected_by_user", {
+          callNamespace.emit("call_rejected_by_user", {
             channelCallId,
             rejectedBy,
             isGroupCall: true,
             chatInfo,
           });
 
-          const callerSocketIds = notificationUserSocketMap.get(callerInfo.id.toString());
+          const callerSocketIds = callUserSocketMap.get(callerInfo.id.toString());
           if (callerSocketIds) {
             for (const callerSocketId of callerSocketIds) {
-              notificationsNamespace.to(callerSocketId).emit("call_rejected_by_user", {
+              callNamespace.to(callerSocketId).emit("call_rejected_by_user", {
                 channelCallId,
                 rejectedBy,
                 isGroupCall: true,
@@ -360,10 +360,10 @@ module.exports = (io) => {
             }
           }
         } else {
-          const callerSocketIds = notificationUserSocketMap.get(callerInfo.id.toString());
+          const callerSocketIds = callUserSocketMap.get(callerInfo.id.toString());
           if (callerSocketIds) {
             for (const callerSocketId of callerSocketIds) {
-              notificationsNamespace.to(callerSocketId).emit("call_ended", {
+              callNamespace.to(callerSocketId).emit("call_ended", {
                 channelCallId,
                 endedBy: rejectedBy,
                 reason: "rejected",
@@ -383,7 +383,7 @@ module.exports = (io) => {
         const { channelCallId, userInfo, chatId } = data;
         const userId = socket.userId;
 
-        notificationsNamespace.emit("user_left_call", {
+        callNamespace.emit("user_left_call", {
           channelCallId,
           userInfo,
           userId,
@@ -403,10 +403,10 @@ module.exports = (io) => {
             const channel = await Channel.findOne({ _id: chatId });
             if (channel?.members) {
               for (const member of channel.members) {
-                const memberSocketIds = notificationUserSocketMap.get(member.userId.toString());
+                const memberSocketIds = callUserSocketMap.get(member.userId.toString());
                 if (memberSocketIds) {
                   for (const socketId of memberSocketIds) {
-                    notificationsNamespace.to(socketId).emit("group_call_ended", {
+                    callNamespace.to(socketId).emit("group_call_ended", {
                       channelCallId,
                       chatId,
                     });
@@ -419,10 +419,10 @@ module.exports = (io) => {
             const channel = await Channel.findOne({ _id: chatId });
             if (channel?.members) {
               for (const member of channel.members) {
-                const memberSocketIds = notificationUserSocketMap.get(member.userId.toString());
+                const memberSocketIds = callUserSocketMap.get(member.userId.toString());
                 if (memberSocketIds) {
                   for (const socketId of memberSocketIds) {
-                    notificationsNamespace.to(socketId).emit("active_group_call", {
+                    callNamespace.to(socketId).emit("active_group_call", {
                       channelCallId,
                       callType: callInfo.callType,
                       chatId,
@@ -453,10 +453,10 @@ module.exports = (io) => {
 
         for (const participantId of participants) {
           if (participantId.toString() !== endedByUserId) {
-            const participantSocketIds = notificationUserSocketMap.get(participantId.toString());
+            const participantSocketIds = callUserSocketMap.get(participantId.toString());
             if (participantSocketIds) {
               for (const participantSocketId of participantSocketIds) {
-                notificationsNamespace.to(participantSocketId).emit("call_ended", {
+                callNamespace.to(participantSocketId).emit("call_ended", {
                   channelCallId,
                   endedBy: endedByUserId,
                 });
