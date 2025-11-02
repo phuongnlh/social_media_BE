@@ -1,12 +1,11 @@
 const FCMToken = require("../models/fcm_tokens.model");
 
 const SaveFcmToken = async (req, res) => {
-  const { userId, deviceId, token, platform } = req.body;
-
-  if (!userId || !deviceId || !token) return res.status(400).json({ message: "Missing data" });
+  const { user_id, deviceId, token, platform } = req.body;
+  if (!user_id || !deviceId || !token) return res.status(400).json({ message: "Missing data" });
 
   await FCMToken.findOneAndUpdate(
-    { userId, deviceId, platform },
+    { user_id, deviceId, platform },
     { $set: { token, updatedAt: new Date() } },
     { upsert: true }
   );
