@@ -9,7 +9,7 @@ const mongoose = require("mongoose");
 const User = require("../models/user.model");
 const notificationService = require("../services/notification.service");
 const GroupPostReport = require("../models/Group/group_postReport.model");
-const { getSocketIO, getUserSocketMap } = require("../socket/io-instance");
+const { getSocketIO, getUserSocketMap, getNotificationUserSocketMap } = require("../socket/io-instance");
 
 // Hàm kiểm tra quyền admin trong group
 const isGroupAdmin = async (group_id, user_id) => {
@@ -786,7 +786,7 @@ const reactToGroupPost = async (req, res) => {
         // Lấy danh sách user đã react (trừ chủ post)
         const reactions = await PostReaction.find({ postgr_id }).populate(
           "user_id",
-          "username"
+          "username fullName"
         );
         // Lọc ra user react khác chủ post
         const otherReactUsers = reactions.filter(
@@ -801,18 +801,24 @@ const reactToGroupPost = async (req, res) => {
           const otherCount = otherReactUsers.length - 1;
           let contentNoti = "";
           if (otherCount > 0) {
-            contentNoti = `${currentUser.user_id.username} và ${otherCount} người khác đã bày tỏ cảm xúc bài viết của bạn trong nhóm.`;
+            contentNoti = `${currentUser.user_id.fullName} and ${otherCount} others have reacted to your post.`;
           } else {
-            contentNoti = `${currentUser.user_id.username} đã bày tỏ cảm xúc bài viết của bạn trong nhóm.`;
+            contentNoti = `${currentUser.user_id.fullName} has reacted to your post.`;
           }
           const io = getSocketIO();
-          const userSocketMap = getUserSocketMap();
-          await notificationService.createNotification(
-            io,
+          const notificationsNamespace = io.of("/notifications");
+          const notificationUserSocketMap = getNotificationUserSocketMap();
+          
+          await notificationService.createNotificationWithNamespace(
+            notificationsNamespace,
             groupPost.user_id,
             "group_post_reaction",
             contentNoti,
-            userSocketMap
+            notificationUserSocketMap,
+            {
+              fromUser: user_id,
+              relatedId: postgr_id,
+            }
           );
         }
       }

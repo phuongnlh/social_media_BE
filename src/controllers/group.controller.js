@@ -152,6 +152,7 @@ const getMyGroups = async (req, res) => {
       totalCount: finalGroups.length
     });
   } catch (err) {
+    console.error("getMyGroups error:", err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -753,10 +754,11 @@ const deleteGroup = async (req, res) => {
     // 5. Xóa group posts (sau khi đã xóa comments và reactions)
     await GroupPost.deleteMany({ group_id });
 
-    // 6. Xóa members và requests
+    // 6. Xóa members , requests , reports của group
     await Promise.all([
       GroupMember.deleteMany({ group: group_id }),
       GroupRequest.deleteMany({ group_id }),
+      GroupReport.deleteMany({ reportedGroup: group_id }),
     ]);
 
     // 7. Cuối cùng xóa group
@@ -1008,28 +1010,28 @@ const createGroupReport = async (req, res) => {
     const { group_id, reportType, reason } = req.body;
     const user_id = req.user._id;
 
-    // 1. Validate input
+    // Validate input
     if (!group_id || !reportType || !reason) {
-      return res.status(400).json({ 
-        error: "group_id, reportType, and reason are required" 
+      return res.status(400).json({
+        error: "group_id, reportType, and reason are required"
       });
     }
 
-    // 2. Kiểm tra group có tồn tại không
+    // Kiểm tra group có tồn tại không
     const group = await Group.findById(group_id);
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
     }
 
-    // 3. Kiểm tra có được phép report tiếp không
+    // Kiểm tra có được phép report tiếp không
     const existingActiveReport = await GroupReport.findOne({
       reportedGroup: group_id,
       reportedBy: user_id,
-      status: { $in: ["pending", "investigating"] }
+      status: { $in: ["pending"] }
     });
 
     if (existingActiveReport) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: "You already have a report being processed for this group",
         existingReport: {
           status: existingActiveReport.status,
@@ -1039,7 +1041,23 @@ const createGroupReport = async (req, res) => {
       });
     }
 
-    // 4. Tạo report mới
+    const pendingReportsCount = await GroupReport.countDocuments({
+      reportedGroup: group_id,
+      status: { $in: ["pending", "investigating"] }
+    });
+    const totalPendingReports = pendingReportsCount + 1;
+    let newSeverity = "low";
+    if (totalPendingReports >= 30) {
+      newSeverity = "critical";
+    } else if (totalPendingReports >= 20) {
+      newSeverity = "high";
+    } else if (totalPendingReports >= 10) {
+      newSeverity = "medium";
+    } else if (totalPendingReports >= 1) {
+      newSeverity = "low";
+    }
+
+    // Tạo report mới
     const report = await GroupReport.create({
       reportedBy: user_id,
       reportedGroup: group_id,
@@ -1048,13 +1066,13 @@ const createGroupReport = async (req, res) => {
       status: "pending",
     });
 
-    // 5. Cập nhật thống kê trong Group
-    // await Group.findByIdAndUpdate(group_id, {
-    //   $inc: { totalReportsReceived: 1 },
-    //   $set: { lastReportedAt: new Date() },
-    // });
+    group.severity = newSeverity;
+    if (newSeverity === "critical" || newSeverity === "high") {
+      group.status = "investigating";
+    }
+    await group.save();
 
-    res.status(201).json({ 
+    res.status(201).json({
       message: "Report submitted successfully. Admins will review it soon.",
       report: {
         _id: report._id,
@@ -1062,17 +1080,24 @@ const createGroupReport = async (req, res) => {
         reason: report.reason,
         status: report.status,
         createdAt: report.createdAt,
+      },
+      group: {
+        _id: group._id,
+        name: group.name,
+        severity: group.severity,
+        status: group.status,
+        totalPendingReports
       }
     });
 
   } catch (err) {
     // Handle duplicate report error từ MongoDB unique index
     if (err.code === 11000) {
-      return res.status(400).json({ 
-        error: "You have already reported this group" 
+      return res.status(400).json({
+        error: "You have already reported this group"
       });
     }
-    
+
     console.error("createGroupReport error:", err);
     res.status(500).json({ error: err.message });
   }
