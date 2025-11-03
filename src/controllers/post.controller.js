@@ -9,11 +9,7 @@ const Comment = require("../models/Comment_Reaction/comment.model");
 const Activity = require("../models/Payment_Ads/activity-ads.model");
 const mongoose = require("mongoose");
 const notificationService = require("../services/notification.service");
-const {
-  getSocketIO,
-  getUserSocketMap,
-  getNotificationUserSocketMap,
-} = require("../socket/io-instance");
+const { getSocketIO, getUserSocketMap, getNotificationUserSocketMap } = require("../socket/io-instance");
 const moderationService = require("../queues/moderationQueue");
 const NodeCache = require("node-cache");
 const { calculatePostScore } = require("../services/scoring.service");
@@ -54,9 +50,7 @@ const createPost = async (req, res) => {
     }
 
     // Kiểm duyệt hình ảnh
-    const getMedia = await PostMedia.findOne({ post_id: post._id }).populate(
-      "media_id"
-    );
+    const getMedia = await PostMedia.findOne({ post_id: post._id }).populate("media_id");
 
     if (getMedia && getMedia.media_id.length > 0) {
       if (getMedia.media_id.length === 1) {
@@ -78,9 +72,7 @@ const createPost = async (req, res) => {
     }
 
     // Populate media cho response
-    const postMedia = await PostMedia.findOne({ post_id: post._id }).populate(
-      "media_id"
-    );
+    const postMedia = await PostMedia.findOne({ post_id: post._id }).populate("media_id");
 
     const mediaData =
       postMedia?.media_id?.map((m) => ({
@@ -88,11 +80,12 @@ const createPost = async (req, res) => {
         type: m.media_type,
       })) || [];
 
+    const author = await userModel.findById(userId).select("username avatar_url fullName");
     res.status(201).json({
       message: "Post created successfully",
       post: {
         ...post.toObject(),
-        author: userId,
+        author,
         media: mediaData,
       },
     });
@@ -155,8 +148,7 @@ const getPostById = async (req, res) => {
       })
       .lean();
 
-    if (!post)
-      return res.status(404).json({ message: "Không tìm thấy bài đăng" });
+    if (!post) return res.status(404).json({ message: "Không tìm thấy bài đăng" });
 
     // Kiểm tra nếu bài đăng đã bị xóa và người yêu cầu không phải tác giả
     if (post.is_deleted && post.user_id._id.toString() !== userId.toString()) {
@@ -164,17 +156,12 @@ const getPostById = async (req, res) => {
     }
 
     // Kiểm tra quyền truy cập nếu bài đăng ở chế độ riêng tư
-    if (
-      post.type === "Private" &&
-      post.user_id._id.toString() !== userId.toString()
-    ) {
+    if (post.type === "Private" && post.user_id._id.toString() !== userId.toString()) {
       return res.status(403).json({ message: "Không có quyền truy cập" });
     }
 
     // Lấy media cho post chính
-    const postMedia = await PostMedia.findOne({ post_id: post._id }).populate(
-      "media_id"
-    );
+    const postMedia = await PostMedia.findOne({ post_id: post._id }).populate("media_id");
     let media = [];
     if (postMedia?.media_id?.length > 0) {
       media = postMedia.media_id.map((m) => ({
@@ -267,10 +254,7 @@ const softDeletePost = async (req, res) => {
       user_id: userId,
       is_deleted: false,
     });
-    if (!post)
-      return res
-        .status(404)
-        .json({ message: "Không tìm thấy bài đăng hoặc đã bị xóa" });
+    if (!post) return res.status(404).json({ message: "Không tìm thấy bài đăng hoặc đã bị xóa" });
 
     // Kiểm tra xem bài đăng có quảng cáo đang hoạt động không
     const activeAds = await adsModel.find({
@@ -291,8 +275,7 @@ const softDeletePost = async (req, res) => {
     await post.save();
 
     res.status(200).json({
-      message:
-        "Bài đăng đã được chuyển vào thùng rác. Sẽ bị xóa vĩnh viễn sau 7 ngày.",
+      message: "Bài đăng đã được chuyển vào thùng rác. Sẽ bị xóa vĩnh viễn sau 7 ngày.",
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -318,14 +301,10 @@ const restorePost = async (req, res) => {
 
     // Kiểm tra xem bài đăng có quá hạn khôi phục không (7 ngày)
     const now = new Date();
-    const expiredDate = new Date(
-      post.deleted_at.getTime() + 7 * 24 * 60 * 60 * 1000
-    );
+    const expiredDate = new Date(post.deleted_at.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     if (now > expiredDate) {
-      return res
-        .status(410)
-        .json({ message: "Không thể khôi phục. Đã quá thời hạn." });
+      return res.status(410).json({ message: "Không thể khôi phục. Đã quá thời hạn." });
     }
 
     // Đánh dấu bài đăng chưa bị xóa và xóa thời gian xóa
@@ -370,9 +349,7 @@ const sharePost = async (req, res) => {
     // Kiểm tra bài gốc có tồn tại không
     const originalPost = await Post.findById(original_post_id);
     if (!originalPost || originalPost.is_deleted) {
-      return res
-        .status(404)
-        .json({ message: "Original post not found or deleted" });
+      return res.status(404).json({ message: "Original post not found or deleted" });
     }
 
     // Không cho share bài đã share
@@ -388,9 +365,7 @@ const sharePost = async (req, res) => {
       shared_post_id: original_post_id,
     });
 
-    res
-      .status(201)
-      .json({ message: "Post shared successfully", postId: sharedPost._id });
+    res.status(201).json({ message: "Post shared successfully", postId: sharedPost._id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -419,9 +394,7 @@ const reactToPost = async (req, res) => {
           },
         ]);
       }
-      return res
-        .status(201)
-        .json({ message: "Reaction saved", reaction: deletedReaction });
+      return res.status(201).json({ message: "Reaction saved", reaction: deletedReaction });
     }
     if (!type) type = "like"; // Mặc định là "like" nếu không có type
 
@@ -456,18 +429,12 @@ const reactToPost = async (req, res) => {
       const post = await Post.findById(post_id);
       if (post && post.user_id.toString() !== user_id.toString()) {
         // Lấy danh sách user đã react (trừ chủ post)
-        const reactions = await PostReaction.find({ post_id }).populate(
-          "user_id",
-          "username fullName"
-        );
+        const reactions = await PostReaction.find({ post_id }).populate("user_id", "username fullName");
         const otherReactUsers = reactions.filter(
-          (r) =>
-            r.user_id && r.user_id._id.toString() !== post.user_id.toString()
+          (r) => r.user_id && r.user_id._id.toString() !== post.user_id.toString()
         );
         if (otherReactUsers.length > 0) {
-          const currentUser = otherReactUsers.find(
-            (r) => r.user_id._id.toString() === user_id.toString()
-          );
+          const currentUser = otherReactUsers.find((r) => r.user_id._id.toString() === user_id.toString());
           const otherCount = otherReactUsers.length - 1;
           let contentNoti = "";
           if (otherCount > 0) {
@@ -475,9 +442,7 @@ const reactToPost = async (req, res) => {
               currentUser.user_id.fullName || currentUser.user_id.username
             } and ${otherCount} others have reacted to your post.`;
           } else {
-            contentNoti = `${
-              currentUser.user_id.fullName || currentUser.user_id.username
-            } has reacted to your post.`;
+            contentNoti = `${currentUser.user_id.fullName || currentUser.user_id.username} has reacted to your post.`;
           }
           const io = getSocketIO();
           const notificationsNamespace = io.of("/notifications");
@@ -509,10 +474,7 @@ const reactToPost = async (req, res) => {
 const getReactionsOfPost = async (req, res) => {
   try {
     const { post_id } = req.params;
-    const reactions = await PostReaction.find({ post_id }).populate(
-      "user_id",
-      "fullName avatar_url"
-    ); //Thêm vào các trường tương ứng nếu cần thiết
+    const reactions = await PostReaction.find({ post_id }).populate("user_id", "fullName avatar_url");
 
     //Đếm
     const counts = await PostReaction.aggregate([
@@ -565,10 +527,7 @@ const getRecommendPost = async (req, res) => {
     const skip = (page - 1) * limit;
 
     // Lấy user info
-    const user = await userModel
-      .findById(userId)
-      .select("username gender age location")
-      .lean();
+    const user = await userModel.findById(userId).select("username gender age location").lean();
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
@@ -591,27 +550,19 @@ const getRecommendPost = async (req, res) => {
       PostReaction.find({ user_id: userId }).select("post_id").lean(),
 
       // 4. User comments
-      Comment.find({ user_id: userId, is_deleted: false })
-        .select("post_id")
-        .lean(),
+      Comment.find({ user_id: userId, is_deleted: false }).select("post_id").lean(),
     ]);
 
     // Convert to Sets for O(1) lookup
     const friendIds = new Set(
       friendships.map((f) =>
-        f.user_id_1.toString() === userId.toString()
-          ? f.user_id_2.toString()
-          : f.user_id_1.toString()
+        f.user_id_1.toString() === userId.toString() ? f.user_id_2.toString() : f.user_id_1.toString()
       )
     );
 
-    const reactedPostIds = new Set(
-      reactions.map((r) => r.post_id?.toString()).filter(Boolean)
-    );
+    const reactedPostIds = new Set(reactions.map((r) => r.post_id?.toString()).filter(Boolean));
 
-    const commentedPostIds = new Set(
-      comments.map((c) => c.post_id?.toString()).filter(Boolean)
-    );
+    const commentedPostIds = new Set(comments.map((c) => c.post_id?.toString()).filter(Boolean));
 
     // === AGGREGATE POSTS ===
     const posts = await Post.aggregate([
@@ -718,9 +669,7 @@ const getRecommendPost = async (req, res) => {
 
     // Populate media (batch query thay vì N+1)
     const postIds = populatedPosts.map((p) => p._id);
-    const sharedPostIds = populatedPosts
-      .map((p) => p.shared_post_id?._id)
-      .filter(Boolean);
+    const sharedPostIds = populatedPosts.map((p) => p.shared_post_id?._id).filter(Boolean);
 
     const allPostIds = [...postIds, ...sharedPostIds];
 
@@ -746,8 +695,7 @@ const getRecommendPost = async (req, res) => {
 
       let sharedPost = null;
       if (post.shared_post_id) {
-        const sharedMedia =
-          mediaMap.get(post.shared_post_id._id.toString()) || [];
+        const sharedMedia = mediaMap.get(post.shared_post_id._id.toString()) || [];
         sharedPost = {
           ...post.shared_post_id.toObject(),
           media: sharedMedia,
@@ -938,9 +886,7 @@ const getAllPostsbyUserId = async (req, res) => {
     // Lọc posts có media nếu media_only được truyền vào
     let filteredPosts = postsWithMedia;
     if (media_only && (media_only === "true" || media_only === "1")) {
-      filteredPosts = postsWithMedia.filter(
-        (post) => post.media && post.media.length > 0
-      );
+      filteredPosts = postsWithMedia.filter((post) => post.media && post.media.length > 0);
     }
 
     res.json(filteredPosts);
@@ -970,10 +916,7 @@ const searchPost = async (req, res) => {
         $match: {
           content: { $regex: query, $options: "i" },
           is_deleted: false,
-          $or: [
-            { type: "Public" },
-            { type: "Friends", user_id: { $in: [...friendIds, userId] } },
-          ],
+          $or: [{ type: "Public" }, { type: "Friends", user_id: { $in: [...friendIds, userId] } }],
         },
       },
       {
@@ -1172,17 +1115,10 @@ const increaseViewCount = async (req, res) => {
       const adsAfterUpdate = await adsModel.findById(adsBeforeUpdate._id);
 
       // Tạo progress activities (25%, 50%, 75%)
-      await createProgressActivities(
-        adsAfterUpdate,
-        adsBeforeUpdate.current_views,
-        adsAfterUpdate.current_views
-      );
+      await createProgressActivities(adsAfterUpdate, adsBeforeUpdate.current_views, adsAfterUpdate.current_views);
 
       // Tạo completed activity
-      if (
-        adsAfterUpdate.status === "completed" &&
-        adsBeforeUpdate.status === "active"
-      ) {
+      if (adsAfterUpdate.status === "completed" && adsBeforeUpdate.status === "active") {
         await Activity.create({
           user_id: adsAfterUpdate.user_id,
           ads_id: adsAfterUpdate._id,
