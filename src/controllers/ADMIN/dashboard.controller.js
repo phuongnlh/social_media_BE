@@ -5,6 +5,7 @@ const Comment = require("../../models/Comment_Reaction/comment.model");
 const postMediaModel = require("../../models/postMedia.model");
 const commentModel = require("../../models/Comment_Reaction/comment.model");
 const post_reactionModel = require("../../models/Comment_Reaction/post_reaction.model");
+const Payment = require("../../models/Payment_Ads/payment.model");
 const getAnalytics = async (req, res) => {
   const totalUsers = await User.countDocuments({ role: "user" });
   const totalPosts = await postModel.countDocuments();
@@ -235,9 +236,267 @@ const getDailyInteractions = async (req, res) => {
   }
 };
 
+const getPaymentAnalytics = async (req, res) => {
+  try {
+    const { period = '30' } = req.query; // 7, 30, 90 days
+    const days = parseInt(period);
+    
+    const now = new Date();
+    const startDate = new Date(now);
+    startDate.setDate(now.getDate() - (days - 1));
+    startDate.setHours(0, 0, 0, 0);
+
+    // Helper để format ngày
+    const formatDate = (date) => {
+      return date.toISOString().split("T")[0];
+    };
+
+    // Helper để convert amount về đơn vị chuẩn
+    const convertAmount = (amount, currency) => {
+      if (currency === 'USD') {
+        return amount / 100;
+      }
+      return amount;
+    };
+
+    // Aggregate payments: chỉ lấy status = 'paid'
+    const payments = await Payment.aggregate([
+      {
+        $match: {
+          created_at: { $gte: startDate, $lte: now },
+          status: "paid",
+        },
+      },
+      {
+        $group: {
+          _id: {
+            date: {
+              $dateToString: { format: "%Y-%m-%d", date: "$created_at" },
+            },
+            currency: "$currency",
+          },
+          totalAmount: { $sum: "$amount" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // Sinh danh sách ngày theo period
+    const daysList = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(now.getDate() - i);
+      daysList.push(d);
+    }
+
+    // Map dữ liệu ra kết quả
+    const result = daysList.map((d) => {
+      const dateStr = formatDate(d);
+      const dayLabel = d.toLocaleDateString("en-US", { 
+        month: "short", 
+        day: "numeric" 
+      });
+
+      const dayData = payments.filter((p) => p._id.date === dateStr);
+
+      let vndRevenue = 0;
+      let usdRevenue = 0;
+      let totalTransactions = 0;
+
+      dayData.forEach((item) => {
+        const currency = item._id.currency || 'VND';
+        const convertedAmount = convertAmount(item.totalAmount, currency);
+
+        if (currency === 'USD') {
+          usdRevenue += convertedAmount;
+        } else {
+          vndRevenue += convertedAmount;
+        }
+        totalTransactions += item.count;
+      });
+
+      return {
+        day: dayLabel,
+        date: dateStr,
+        vnd: Math.round(vndRevenue),
+        usd: parseFloat(usdRevenue.toFixed(2)),
+        transactions: totalTransactions,
+      };
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error("Payment Analytics Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+const getPaymentSummary = async (req, res) => {
+  try {
+    const { period = "30" } = req.query; // 7, 30, 90 (days)
+    
+    const days = parseInt(period);
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+
+    // Helper để convert amount
+    const convertAmount = (amount, currency) => {
+      if (currency === 'USD') {
+        return amount / 100;
+      }
+      return amount;
+    };
+
+    // Aggregate theo status
+    const summary = await Payment.aggregate([
+      {
+        $match: {
+          created_at: { $gte: startDate },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            status: "$status",
+            currency: "$currency",
+          },
+          count: { $sum: 1 },
+          totalAmount: { $sum: "$amount" },
+        },
+      },
+    ]);
+
+    // Tính tổng
+    const total = summary.reduce((acc, item) => acc + item.count, 0);
+    
+    let vndRevenue = 0;
+    let usdRevenue = 0;
+    let paidCount = 0;
+
+    summary.forEach((item) => {
+      if (item._id.status === 'paid') {
+        const currency = item._id.currency || 'VND';
+        const convertedAmount = convertAmount(item.totalAmount, currency);
+        
+        if (currency === 'USD') {
+          usdRevenue += convertedAmount;
+        } else {
+          vndRevenue += convertedAmount;
+        }
+        paidCount += item.count;
+      }
+    });
+
+    const successRate = total > 0 
+      ? ((paidCount / total) * 100).toFixed(1)
+      : 0;
+
+    res.json({
+      total,
+      paidCount,
+      successRate: `${successRate}%`,
+      revenue: {
+        vnd: Math.round(vndRevenue),
+        usd: parseFloat(usdRevenue.toFixed(2)),
+        vndFormatted: new Intl.NumberFormat('vi-VN').format(vndRevenue) + ' đ',
+        usdFormatted: '$' + new Intl.NumberFormat('en-US', { minimumFractionDigits: 2 }).format(usdRevenue),
+      },
+      breakdown: summary.map(item => ({
+        status: item._id.status,
+        currency: item._id.currency || 'VND',
+        count: item.count,
+        amount: item.totalAmount,
+      })),
+    });
+  } catch (err) {
+    console.error("Payment Summary Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+const getPaymentMethodStats = async (req, res) => {
+  try {
+    
+    const convertAmount = (amount, currency) => {
+      if (currency === 'USD') {
+        return amount / 100;
+      }
+      return amount;
+    };
+
+    const methodStats = await Payment.aggregate([
+      {
+        $match: {
+          status: "paid",
+        },
+      },
+      {
+        $group: {
+          _id: {
+            method: "$method",
+            currency: "$currency",
+          },
+          count: { $sum: 1 },
+          totalAmount: { $sum: "$amount" },
+        },
+      },
+    ]);
+
+    // Group lại theo method
+    const methodMap = {};
+
+    methodStats.forEach((item) => {
+      const method = item._id.method;
+      const currency = item._id.currency || 'VND';
+      const convertedAmount = convertAmount(item.totalAmount, currency);
+
+      if (!methodMap[method]) {
+        methodMap[method] = {
+          method,
+          count: 0,
+          vnd: 0,
+          usd: 0,
+          color: getMethodColor(method),
+        };
+      }
+
+      if (currency === 'USD') {
+        methodMap[method].usd += convertedAmount;
+      } else {
+        methodMap[method].vnd += convertedAmount;
+      }
+      methodMap[method].count += item.count;
+    });
+
+    const result = Object.values(methodMap).map(item => ({
+      ...item,
+      vnd: Math.round(item.vnd),
+      usd: parseFloat(item.usd.toFixed(2)),
+    }));
+
+    res.json(result);
+  } catch (err) {
+    console.error("Payment Method Stats Error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Helper: Màu sắc cho từng phương thức
+function getMethodColor(method) {
+  const colors = {
+    stripe: "#635BFF",
+    momo: "#D82D8B",
+    mock: "#6B7280",
+  };
+  return colors[method] || "#3B82F6";
+}
+
 module.exports = {
   getAnalytics,
   getPostStats,
   getUserGrowth,
   getDailyInteractions,
+  getPaymentAnalytics,
+  getPaymentSummary,
+  getPaymentMethodStats,
 };

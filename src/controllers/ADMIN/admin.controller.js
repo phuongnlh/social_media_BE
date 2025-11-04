@@ -356,6 +356,23 @@ const updateUserStatus = async (req, res) => {
       select: "-hash -salt -twoFASecret",
     });
 
+    if (action === "block") {
+      const UserReport = require("../../models/userReport.model");
+      await UserReport.updateMany(
+        {
+          reportedUser: userId,
+          status: { $in: ["pending", "investigating"] }
+        },
+        {
+          $set: {
+            status: "resolved",
+            actionTaken: "user_banned",
+            resolvedAt: new Date()
+          }
+        }
+      );
+    }
+
     // Log admin action
     console.log(`Admin action: ${action} user ${userId}. Reason: ${reason || "No reason provided"}`);
 
