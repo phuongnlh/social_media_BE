@@ -856,7 +856,7 @@ const getRecommendPost = async (req, res) => {
     const organicPosts = scoredPosts.filter((p) => !p.isAd);
 
     const finalPosts = createNaturalMixFeed(organicPosts, adPosts, {
-      maxAdDensity: 0.15, // 15% là ads (1 ad mỗi ~6-7 posts)
+      maxAdDensity: 0.30, // 15% là ads (1 ad mỗi ~6-7 posts)
       minPostsBeforeFirstAd: 3, // Ít nhất 3 bài trước ad đầu tiên
       minSpacingBetweenAds: 4, // Ít nhất 4 bài giữa 2 ads
       randomSpacingRange: 2, // Random ±2 bài để tự nhiên hơn
