@@ -509,6 +509,104 @@ const getUserReactionsForPosts = async (req, res) => {
 // Cache cho static data
 const staticCache = new NodeCache({ stdTTL: 300, checkperiod: 60 }); // 5 phút
 
+function createNaturalMixFeed(organicPosts, adPosts, config = {}) {
+  const {
+    maxAdDensity = 0.15, // Tối đa 15% là ads
+    minPostsBeforeFirstAd = 3, // Ít nhất 3 bài trước ad đầu tiên
+    minSpacingBetweenAds = 4, // Ít nhất 4 bài giữa 2 ads
+    randomSpacingRange = 2, // Random ±2 để tự nhiên
+  } = config;
+
+  // Nếu không có ads, trả về organic posts
+  if (!adPosts.length) {
+    return organicPosts;
+  }
+
+  // Giới hạn số ads theo maxAdDensity
+  const totalPosts = organicPosts.length + adPosts.length;
+  const maxAdsAllowed = Math.floor(totalPosts * maxAdDensity);
+  const adsToUse = adPosts.slice(0, maxAdsAllowed);
+
+  // Nếu không có organic posts, chỉ trả về ads
+  if (!organicPosts.length) {
+    return adsToUse;
+  }
+
+  // ✅ TÍNH TOÁN VỊ TRÍ QUẢNG CÁO
+  const adPositions = calculateAdPositions(organicPosts.length, adsToUse.length, {
+    minPostsBeforeFirstAd,
+    minSpacingBetweenAds,
+    randomSpacingRange,
+  });
+
+  // ✅ MERGE ORGANIC + ADS
+  const finalFeed = [];
+  let organicIndex = 0;
+  let adIndex = 0;
+
+  for (let position = 0; position < totalPosts; position++) {
+    // Kiểm tra có cần chèn ad tại vị trí này không
+    if (adPositions.includes(position) && adIndex < adsToUse.length) {
+      finalFeed.push(adsToUse[adIndex]);
+      adIndex++;
+    } else if (organicIndex < organicPosts.length) {
+      finalFeed.push(organicPosts[organicIndex]);
+      organicIndex++;
+    }
+  }
+
+  // Thêm các bài organic còn lại (nếu có)
+  while (organicIndex < organicPosts.length) {
+    finalFeed.push(organicPosts[organicIndex]);
+    organicIndex++;
+  }
+
+  return finalFeed;
+}
+
+/**
+ * Tính toán vị trí chèn quảng cáo
+ */
+function calculateAdPositions(
+  organicCount,
+  adCount,
+  { minPostsBeforeFirstAd, minSpacingBetweenAds, randomSpacingRange }
+) {
+  const positions = [];
+
+  if (adCount === 0 || organicCount === 0) {
+    return positions;
+  }
+
+  // Tính khoảng cách trung bình giữa các ads
+  const totalSlots = organicCount + adCount;
+  const averageSpacing = Math.floor(totalSlots / (adCount + 1));
+
+  let currentPosition = minPostsBeforeFirstAd;
+
+  for (let i = 0; i < adCount; i++) {
+    // Random spacing trong khoảng cho phép
+    const randomOffset = Math.floor(Math.random() * (randomSpacingRange * 2 + 1) - randomSpacingRange);
+
+    const spacing =
+      i === 0 ? minPostsBeforeFirstAd + randomOffset : Math.max(minSpacingBetweenAds, averageSpacing + randomOffset);
+
+    currentPosition += spacing;
+
+    // Đảm bảo không vượt quá số lượng posts
+    if (currentPosition >= totalSlots) {
+      break;
+    }
+
+    positions.push(currentPosition);
+
+    // Di chuyển position sang vị trí tiếp theo (tính cả ad vừa chèn)
+    currentPosition += 1;
+  }
+
+  return positions.sort((a, b) => a - b);
+}
+
 /**
  * API: GET /post/recommend
  * Query params: page, limit, lat, lng
@@ -745,27 +843,30 @@ const getRecommendPost = async (req, res) => {
         // Scoring metadata
         score: scoreResult.score,
         isAd: scoreResult.isAd,
+        adMatches: scoreResult.adMatches,
         randomKey: post.randomKey,
       };
     });
 
     // Sort by final score
-    const finalPosts = [];
-    let lastWasAd = false;
-    scoredPosts
-      .sort((a, b) => b.score - a.score || a.randomKey - b.randomKey)
-      .forEach((post) => {
-        if (post.isAd && lastWasAd) {
-          finalPosts.push(null);
-        }
-        finalPosts.push(post);
-        lastWasAd = post.isAd;
-      });
+    scoredPosts.sort((a, b) => b.score - a.score || a.randomKey - b.randomKey);
+
+    // ✅ ============== NATURAL MIX ALGORITHM ==============
+    const adPosts = scoredPosts.filter((p) => p.isAd);
+    const organicPosts = scoredPosts.filter((p) => !p.isAd);
+
+    const finalPosts = createNaturalMixFeed(organicPosts, adPosts, {
+      maxAdDensity: 0.15, // 15% là ads (1 ad mỗi ~6-7 posts)
+      minPostsBeforeFirstAd: 3, // Ít nhất 3 bài trước ad đầu tiên
+      minSpacingBetweenAds: 4, // Ít nhất 4 bài giữa 2 ads
+      randomSpacingRange: 2, // Random ±2 bài để tự nhiên hơn
+    });
+    // ✅ ================================================
 
     // Pagination
     const paginatedPosts = finalPosts.slice(skip, skip + limit);
 
-    // Get total count (approximate để tránh query chậm)
+    // Get total count
     const totalPosts = finalPosts.length;
 
     // Response
@@ -785,7 +886,14 @@ const getRecommendPost = async (req, res) => {
         userLocation: userLocation?.displayName || "Unknown",
         locationSource: userLocation?.source || "none",
         locationCacheHit: req.locationCacheHit || false,
-        adsCount: postAds.length,
+        adsCount: adPosts.length,
+        organicCount: organicPosts.length,
+        adDensity: `${((adPosts.length / finalPosts.length) * 100).toFixed(1)}%`,
+        feedComposition: {
+          totalPosts: finalPosts.length,
+          ads: adPosts.length,
+          organic: organicPosts.length,
+        },
       },
     });
   } catch (err) {
