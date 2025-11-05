@@ -27,7 +27,7 @@ const refreshAccessToken = async (req, res) => {
 
       if (recentTokens.length > 0) {
         // ⚠️ Có token mới => Có thể là refresh song song → không xoá session
-        return res.status(401).json({ message: "Token expired, please retry refresh." });
+        return res.status(403).json({ message: "Refresh token expired" });
       }
 
       // 🚨 Replay attack thật → xoá toàn bộ session
