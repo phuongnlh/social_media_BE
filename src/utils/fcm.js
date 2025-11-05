@@ -1,4 +1,4 @@
-import admin from "../config/firebase";
+const admin = require( "../config/firebase");
 
 /**
  * Gửi thông báo FCM đến 1 hoặc nhiều thiết bị
