@@ -48,3 +48,6 @@ pids/
 *.pid
 *.seed
 *.pid.lock
+
+google-services.json
+admin-google-services.json

@@ -4,6 +4,7 @@ const notificationService = require("../services/notification.service");
 const { getSocketIO, getNotificationUserSocketMap } = require("../socket/io-instance");
 const postModel = require("../models/post.model");
 const { default: mongoose } = require("mongoose");
+const Fuse = require("fuse.js");
 
 // Gửi lời mời kết bạn đến một người dùng khác
 const sendFriendRequest = async (req, res) => {
@@ -311,89 +312,189 @@ const withdrawFriendRequest = async (req, res) => {
   }
 };
 
+// Cache toàn cục
+const fuseCache = new Map();
+
+// Hàm chuẩn hóa tiếng Việt
+function removeAccents(str) {
+  if (!str) return '';
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase();
+}
+
+// Tạo key cache cho bạn bè (dựa trên danh sách ID)
+function getFriendCacheKey(userId, friendIds) {
+  const sortedIds = friendIds.sort().join(',');
+  return `friends_${userId}_${sortedIds}`;
+}
+
+// Tạo key cache toàn cục
+function getGlobalCacheKey() {
+  return 'global_user_search';
+}
+
 // Tìm kiếm bạn bè
 const searchFriends = async (req, res) => {
-  const { query } = req.query;
+  const { query, page = 1, limit = 15 } = req.query;
+  const trimmedQuery = (query)?.trim();
+  const pageNum = parseInt(page, 10);
+  const limitNum = parseInt(limit, 10);
+
   try {
-    const friends = await User.find({
-      $or: [{ fullName: { $regex: query, $options: "i" } }],
-      is_deleted: false,
-    }).select("_id fullName avatar_url username bio");
+    // 1. Lấy người dùng (giới hạn an toàn)
+    const users = await User.find({ is_deleted: false })
+      .lean()
+      .select('_id fullName avatar_url username bio')
+      .limit(10000);
 
-    // Với mỗi friend, gắn thêm số post + số bạn
-    const friendsWithStats = await Promise.all(
-      friends.map(async (friend) => {
-        const postsCount = await postModel.countDocuments({
-          user_id: friend._id,
-          is_deleted: false,
+    if (users.length === 0) {
+      return res.json({ data: [], total: 0, page: pageNum, limit: limitNum });
+    }
+
+    // 2. Dùng Fuse.js nếu có query
+    let results = users;
+    if (trimmedQuery) {
+      const cacheKey = getGlobalCacheKey();
+      let fuse = fuseCache.get(cacheKey);
+
+      if (!fuse) {
+        fuse = new Fuse(users, {
+          keys: [
+            { name: 'fullName', weight: 1.0 },
+            { name: 'username', weight: 0.9 },
+            { name: 'bio', weight: 0.7 },
+          ],
+          threshold: 0.4,
+          includeScore: true,
+          shouldSort: true,
+          minMatchCharLength: 1,
+          ignoreLocation: true,
+          getFn: (obj, path) => removeAccents(obj[path] || ''),
         });
+        fuseCache.set(cacheKey, fuse);
+      }
 
-        const friendsCount = await Friendship.countDocuments({
-          $or: [{ user_id_1: friend._id }, { user_id_2: friend._id }],
-          status: "accepted",
-        });
+      const fuseResults = fuse.search(trimmedQuery);
+      results = fuseResults.map(r => ({ ...r.item, _score: r.score }));
+    }
 
-        return {
-          ...friend.toObject(),
-          postsCount,
-          friendsCount,
-        };
-      })
-    );
+    // 3. Phân trang
+    const total = results.length;
+    const start = (pageNum - 1) * limitNum;
+    const end = start + limitNum;
+    const paginated = results.slice(start, end);
 
-    res.json(friendsWithStats);
+    // 4. Gắn stats (chỉ cho trang hiện tại)
+    const data = await attachUserStats(paginated);
+
+    // 5. Trả về
+    res.json({
+      data,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      hasMore: end < total,
+      query: trimmedQuery || null,
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('searchFriends error:', err);
+    res.status(500).json({ error: 'Lỗi tìm kiếm' });
   }
 };
 
 const searchMyFriends = async (req, res) => {
-  const userId = req.user._id;
+  const userId = req.user._id.toString();
   const { query } = req.query;
+  const trimmedQuery = query?.trim();
 
   try {
-    // Lấy danh sách các mối quan hệ đã chấp nhận
-    const myFriends = await Friendship.find({
+    // 1. Lấy friendIds
+    const friendships = await Friendship.find({
       status: "accepted",
       $or: [{ user_id_1: userId }, { user_id_2: userId }],
-    });
+    })
+      .lean()
+      .select("user_id_1 user_id_2");
 
-    // Lấy ra ID của những người bạn (người còn lại trong mỗi cặp)
-    const friendIds = myFriends.map((f) => (f.user_id_1.toString() === userId.toString() ? f.user_id_2 : f.user_id_1));
+    const friendIds = friendships.map((f) => (f.user_id_1.toString() === userId ? f.user_id_2 : f.user_id_1));
 
-    // Tìm bạn bè theo tên (nếu có query), và chỉ trong danh sách bạn bè
+    if (friendIds.length === 0) {
+      return res.json([]);
+    }
+
+    // 2. Lấy bạn bè
     const friends = await User.find({
       _id: { $in: friendIds },
-      ...(query ? { fullName: { $regex: query, $options: "i" } } : {}),
       is_deleted: false,
-    }).select("_id fullName avatar_url username bio");
+    })
+      .lean()
+      .select("_id fullName avatar_url username bio");
 
-    // Gắn thêm thống kê: số bài viết + số bạn bè
-    const friendsWithStats = await Promise.all(
-      friends.map(async (friend) => {
-        const postsCount = await postModel.countDocuments({
-          user_id: friend._id,
-          is_deleted: false,
+    let results = friends;
+
+    // 3. Dùng Fuse.js
+    if (trimmedQuery) {
+      const cacheKey = getFriendCacheKey(
+        userId,
+        friendIds.map((id) => id.toString())
+      );
+      let fuse = fuseCache.get(cacheKey);
+
+      if (!fuse) {
+        fuse = new Fuse(friends, {
+          keys: ["fullName"],
+          threshold: 0.4,
+          includeScore: true,
+          shouldSort: true,
+          minMatchCharLength: 1,
+          ignoreLocation: true,
+          getFn: (obj, path) => removeAccents(obj[path] || ""),
         });
+        fuseCache.set(cacheKey, fuse);
+      }
 
-        const friendsCount = await Friendship.countDocuments({
-          $or: [{ user_id_1: friend._id }, { user_id_2: friend._id }],
-          status: "accepted",
-        });
+      const fuseResults = fuse.search(trimmedQuery);
+      results = fuseResults.map((r) => ({ ...r.item, _score: r.score }));
+    }
 
-        return {
-          ...friend.toObject(),
-          postsCount,
-          friendsCount,
-        };
-      })
-    );
+    // 4. Giới hạn + gắn stats
+    const limited = results.slice(0, 50);
+    const data = await attachUserStats(limited);
 
-    res.json(friendsWithStats);
+    res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("searchMyFriends error:", err);
+    res.status(500).json({ error: "Lỗi tìm kiếm bạn bè" });
   }
 };
+
+async function attachUserStats(users) {
+  return Promise.all(
+    users.map(async (user) => {
+      const [postsCount, friendsCount] = await Promise.all([
+        postModel.countDocuments({ user_id: user._id, is_deleted: false }).catch(() => 0),
+        Friendship.countDocuments({
+          $or: [{ user_id_1: user._id }, { user_id_2: user._id }],
+          status: "accepted",
+        }).catch(() => 0),
+      ]);
+
+      return {
+        _id: user._id,
+        fullName: user.fullName,
+        avatar_url: user.avatar_url || null,
+        username: user.username,
+        bio: user.bio || "",
+        postsCount: postsCount || 0,
+        friendsCount: friendsCount || 0,
+      };
+    })
+  );
+}
 
 // Lấy trạng thái quan hệ bạn bè giữa user hiện tại và profile đang xem
 const getFriendshipStatus = async (req, res) => {

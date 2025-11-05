@@ -310,7 +310,7 @@ const handleMoMoWebhook = async (req, res) => {
       await handleFailedMoMoPayment(adsId, paymentId);
     }
 
-    res.status(200).json({ message: 'OK' });
+    res.status(200).send("OK");
 
   } catch (error) {
     console.error('Error handling MoMo webhook:', error);

@@ -1,3 +1,5 @@
+const Fuse = require("fuse.js");
+
 const Post = require("../models/post.model");
 const Media = require("../models/media.model");
 const PostMedia = require("../models/postMedia.model");
@@ -9,14 +11,13 @@ const Comment = require("../models/Comment_Reaction/comment.model");
 const Activity = require("../models/Payment_Ads/activity-ads.model");
 const mongoose = require("mongoose");
 const notificationService = require("../services/notification.service");
-const {
-  getSocketIO,
-  getUserSocketMap,
-  getNotificationUserSocketMap,
-} = require("../socket/io-instance");
+const { getSocketIO, getUserSocketMap, getNotificationUserSocketMap } = require("../socket/io-instance");
 const moderationService = require("../queues/moderationQueue");
 const NodeCache = require("node-cache");
 const { calculatePostScore } = require("../services/scoring.service");
+const User = require("../models/user.model");
+const commentModel = require("../models/Comment_Reaction/comment.model");
+const postMediaModel = require("../models/postMedia.model");
 
 // Tạo bài đăng mới với tệp media (nếu có)
 const createPost = async (req, res) => {
@@ -54,9 +55,7 @@ const createPost = async (req, res) => {
     }
 
     // Kiểm duyệt hình ảnh
-    const getMedia = await PostMedia.findOne({ post_id: post._id }).populate(
-      "media_id"
-    );
+    const getMedia = await PostMedia.findOne({ post_id: post._id }).populate("media_id");
 
     if (getMedia && getMedia.media_id.length > 0) {
       if (getMedia.media_id.length === 1) {
@@ -78,9 +77,7 @@ const createPost = async (req, res) => {
     }
 
     // Populate media cho response
-    const postMedia = await PostMedia.findOne({ post_id: post._id }).populate(
-      "media_id"
-    );
+    const postMedia = await PostMedia.findOne({ post_id: post._id }).populate("media_id");
 
     const mediaData =
       postMedia?.media_id?.map((m) => ({
@@ -88,11 +85,12 @@ const createPost = async (req, res) => {
         type: m.media_type,
       })) || [];
 
+    const author = await userModel.findById(userId).select("username avatar_url fullName");
     res.status(201).json({
       message: "Post created successfully",
       post: {
         ...post.toObject(),
-        author: userId,
+        author,
         media: mediaData,
       },
     });
@@ -155,8 +153,7 @@ const getPostById = async (req, res) => {
       })
       .lean();
 
-    if (!post)
-      return res.status(404).json({ message: "Không tìm thấy bài đăng" });
+    if (!post) return res.status(404).json({ message: "Không tìm thấy bài đăng" });
 
     // Kiểm tra nếu bài đăng đã bị xóa và người yêu cầu không phải tác giả
     if (post.is_deleted && post.user_id._id.toString() !== userId.toString()) {
@@ -164,17 +161,12 @@ const getPostById = async (req, res) => {
     }
 
     // Kiểm tra quyền truy cập nếu bài đăng ở chế độ riêng tư
-    if (
-      post.type === "Private" &&
-      post.user_id._id.toString() !== userId.toString()
-    ) {
+    if (post.type === "Private" && post.user_id._id.toString() !== userId.toString()) {
       return res.status(403).json({ message: "Không có quyền truy cập" });
     }
 
     // Lấy media cho post chính
-    const postMedia = await PostMedia.findOne({ post_id: post._id }).populate(
-      "media_id"
-    );
+    const postMedia = await PostMedia.findOne({ post_id: post._id }).populate("media_id");
     let media = [];
     if (postMedia?.media_id?.length > 0) {
       media = postMedia.media_id.map((m) => ({
@@ -267,10 +259,7 @@ const softDeletePost = async (req, res) => {
       user_id: userId,
       is_deleted: false,
     });
-    if (!post)
-      return res
-        .status(404)
-        .json({ message: "Không tìm thấy bài đăng hoặc đã bị xóa" });
+    if (!post) return res.status(404).json({ message: "Không tìm thấy bài đăng hoặc đã bị xóa" });
 
     // Kiểm tra xem bài đăng có quảng cáo đang hoạt động không
     const activeAds = await adsModel.find({
@@ -291,8 +280,7 @@ const softDeletePost = async (req, res) => {
     await post.save();
 
     res.status(200).json({
-      message:
-        "Bài đăng đã được chuyển vào thùng rác. Sẽ bị xóa vĩnh viễn sau 7 ngày.",
+      message: "Bài đăng đã được chuyển vào thùng rác. Sẽ bị xóa vĩnh viễn sau 7 ngày.",
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -318,14 +306,10 @@ const restorePost = async (req, res) => {
 
     // Kiểm tra xem bài đăng có quá hạn khôi phục không (7 ngày)
     const now = new Date();
-    const expiredDate = new Date(
-      post.deleted_at.getTime() + 7 * 24 * 60 * 60 * 1000
-    );
+    const expiredDate = new Date(post.deleted_at.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     if (now > expiredDate) {
-      return res
-        .status(410)
-        .json({ message: "Không thể khôi phục. Đã quá thời hạn." });
+      return res.status(410).json({ message: "Không thể khôi phục. Đã quá thời hạn." });
     }
 
     // Đánh dấu bài đăng chưa bị xóa và xóa thời gian xóa
@@ -370,9 +354,7 @@ const sharePost = async (req, res) => {
     // Kiểm tra bài gốc có tồn tại không
     const originalPost = await Post.findById(original_post_id);
     if (!originalPost || originalPost.is_deleted) {
-      return res
-        .status(404)
-        .json({ message: "Original post not found or deleted" });
+      return res.status(404).json({ message: "Original post not found or deleted" });
     }
 
     // Không cho share bài đã share
@@ -388,9 +370,7 @@ const sharePost = async (req, res) => {
       shared_post_id: original_post_id,
     });
 
-    res
-      .status(201)
-      .json({ message: "Post shared successfully", postId: sharedPost._id });
+    res.status(201).json({ message: "Post shared successfully", postId: sharedPost._id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -419,9 +399,7 @@ const reactToPost = async (req, res) => {
           },
         ]);
       }
-      return res
-        .status(201)
-        .json({ message: "Reaction saved", reaction: deletedReaction });
+      return res.status(201).json({ message: "Reaction saved", reaction: deletedReaction });
     }
     if (!type) type = "like"; // Mặc định là "like" nếu không có type
 
@@ -456,18 +434,12 @@ const reactToPost = async (req, res) => {
       const post = await Post.findById(post_id);
       if (post && post.user_id.toString() !== user_id.toString()) {
         // Lấy danh sách user đã react (trừ chủ post)
-        const reactions = await PostReaction.find({ post_id }).populate(
-          "user_id",
-          "username fullName"
-        );
+        const reactions = await PostReaction.find({ post_id }).populate("user_id", "username fullName");
         const otherReactUsers = reactions.filter(
-          (r) =>
-            r.user_id && r.user_id._id.toString() !== post.user_id.toString()
+          (r) => r.user_id && r.user_id._id.toString() !== post.user_id.toString()
         );
         if (otherReactUsers.length > 0) {
-          const currentUser = otherReactUsers.find(
-            (r) => r.user_id._id.toString() === user_id.toString()
-          );
+          const currentUser = otherReactUsers.find((r) => r.user_id._id.toString() === user_id.toString());
           const otherCount = otherReactUsers.length - 1;
           let contentNoti = "";
           if (otherCount > 0) {
@@ -475,9 +447,7 @@ const reactToPost = async (req, res) => {
               currentUser.user_id.fullName || currentUser.user_id.username
             } and ${otherCount} others have reacted to your post.`;
           } else {
-            contentNoti = `${
-              currentUser.user_id.fullName || currentUser.user_id.username
-            } has reacted to your post.`;
+            contentNoti = `${currentUser.user_id.fullName || currentUser.user_id.username} has reacted to your post.`;
           }
           const io = getSocketIO();
           const notificationsNamespace = io.of("/notifications");
@@ -509,10 +479,7 @@ const reactToPost = async (req, res) => {
 const getReactionsOfPost = async (req, res) => {
   try {
     const { post_id } = req.params;
-    const reactions = await PostReaction.find({ post_id }).populate(
-      "user_id",
-      "fullName avatar_url"
-    ); //Thêm vào các trường tương ứng nếu cần thiết
+    const reactions = await PostReaction.find({ post_id }).populate("user_id", "fullName avatar_url");
 
     //Đếm
     const counts = await PostReaction.aggregate([
@@ -547,6 +514,103 @@ const getUserReactionsForPosts = async (req, res) => {
 // Cache cho static data
 const staticCache = new NodeCache({ stdTTL: 300, checkperiod: 60 }); // 5 phút
 
+function createNaturalMixFeed(organicPosts, adPosts, config = {}) {
+  const {
+    maxAdDensity = 0.15, // Tối đa 15% là ads
+    minPostsBeforeFirstAd = 3, // Ít nhất 3 bài trước ad đầu tiên
+    minSpacingBetweenAds = 4, // Ít nhất 4 bài giữa 2 ads
+    randomSpacingRange = 2, // Random ±2 để tự nhiên
+  } = config;
+
+  // Nếu không có ads, trả về organic posts
+  if (!adPosts.length) {
+    return organicPosts;
+  }
+
+  if (!organicPosts.length) {
+    return adPosts;
+  }
+
+  // Giới hạn số ads theo maxAdDensity
+  const maxAdsAllowed = Math.floor((organicPosts.length * maxAdDensity) / (1 - maxAdDensity));
+  const adsToUse = adPosts.slice(0, Math.min(maxAdsAllowed, adPosts.length));
+  const totalPosts = organicPosts.length + adsToUse.length;
+
+  // ✅ TÍNH TOÁN VỊ TRÍ QUẢNG CÁO
+  const adPositions = calculateAdPositions(organicPosts.length, adsToUse.length, {
+    minPostsBeforeFirstAd,
+    minSpacingBetweenAds,
+    randomSpacingRange,
+  });
+
+  // ✅ MERGE ORGANIC + ADS
+  const finalFeed = [];
+  let organicIndex = 0;
+  let adIndex = 0;
+
+  for (let position = 0; position < totalPosts; position++) {
+    // Kiểm tra có cần chèn ad tại vị trí này không
+    if (adPositions.includes(position) && adIndex < adsToUse.length) {
+      finalFeed.push(adsToUse[adIndex]);
+      adIndex++;
+    } else if (organicIndex < organicPosts.length) {
+      finalFeed.push(organicPosts[organicIndex]);
+      organicIndex++;
+    }
+  }
+
+  // Thêm các bài organic còn lại (nếu có)
+  while (organicIndex < organicPosts.length) {
+    finalFeed.push(organicPosts[organicIndex]);
+    organicIndex++;
+  }
+
+  return finalFeed;
+}
+
+/**
+ * Tính toán vị trí chèn quảng cáo
+ */
+function calculateAdPositions(
+  organicCount,
+  adCount,
+  { minPostsBeforeFirstAd, minSpacingBetweenAds, randomSpacingRange }
+) {
+  const positions = [];
+
+  if (adCount === 0 || organicCount === 0) {
+    return positions;
+  }
+
+  // Tính khoảng cách trung bình giữa các ads
+  const totalSlots = organicCount + adCount;
+  const averageSpacing = Math.floor(totalSlots / (adCount + 1));
+
+  let currentPosition = minPostsBeforeFirstAd;
+
+  for (let i = 0; i < adCount; i++) {
+    // Random spacing trong khoảng cho phép
+    const randomOffset = Math.floor(Math.random() * (randomSpacingRange * 2 + 1) - randomSpacingRange);
+
+    const spacing =
+      i === 0 ? minPostsBeforeFirstAd + randomOffset : Math.max(minSpacingBetweenAds, averageSpacing + randomOffset);
+
+    currentPosition += spacing;
+
+    // Đảm bảo không vượt quá số lượng posts
+    if (currentPosition >= totalSlots) {
+      break;
+    }
+
+    positions.push(currentPosition);
+
+    // Di chuyển position sang vị trí tiếp theo (tính cả ad vừa chèn)
+    currentPosition += 1;
+  }
+
+  return positions.sort((a, b) => a - b);
+}
+
 /**
  * API: GET /post/recommend
  * Query params: page, limit, lat, lng
@@ -565,10 +629,7 @@ const getRecommendPost = async (req, res) => {
     const skip = (page - 1) * limit;
 
     // Lấy user info
-    const user = await userModel
-      .findById(userId)
-      .select("username gender age location")
-      .lean();
+    const user = await userModel.findById(userId).select("username gender age location").lean();
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
@@ -591,27 +652,19 @@ const getRecommendPost = async (req, res) => {
       PostReaction.find({ user_id: userId }).select("post_id").lean(),
 
       // 4. User comments
-      Comment.find({ user_id: userId, is_deleted: false })
-        .select("post_id")
-        .lean(),
+      Comment.find({ user_id: userId, is_deleted: false }).select("post_id").lean(),
     ]);
 
     // Convert to Sets for O(1) lookup
     const friendIds = new Set(
       friendships.map((f) =>
-        f.user_id_1.toString() === userId.toString()
-          ? f.user_id_2.toString()
-          : f.user_id_1.toString()
+        f.user_id_1.toString() === userId.toString() ? f.user_id_2.toString() : f.user_id_1.toString()
       )
     );
 
-    const reactedPostIds = new Set(
-      reactions.map((r) => r.post_id?.toString()).filter(Boolean)
-    );
+    const reactedPostIds = new Set(reactions.map((r) => r.post_id?.toString()).filter(Boolean));
 
-    const commentedPostIds = new Set(
-      comments.map((c) => c.post_id?.toString()).filter(Boolean)
-    );
+    const commentedPostIds = new Set(comments.map((c) => c.post_id?.toString()).filter(Boolean));
 
     // === AGGREGATE POSTS ===
     const posts = await Post.aggregate([
@@ -711,16 +764,14 @@ const getRecommendPost = async (req, res) => {
         path: "shared_post_id",
         populate: {
           path: "user_id",
-          select: "username avatar_url fullName",
+          select: "username avatar_url fullName is_deleted",
         },
       },
     ]);
 
     // Populate media (batch query thay vì N+1)
     const postIds = populatedPosts.map((p) => p._id);
-    const sharedPostIds = populatedPosts
-      .map((p) => p.shared_post_id?._id)
-      .filter(Boolean);
+    const sharedPostIds = populatedPosts.map((p) => p.shared_post_id?._id).filter(Boolean);
 
     const allPostIds = [...postIds, ...sharedPostIds];
 
@@ -740,17 +791,21 @@ const getRecommendPost = async (req, res) => {
       mediaMap.set(pm.post_id.toString(), media);
     });
 
-    // Attach media to posts
+    // Attach media & handle shared posts
     const postsWithMedia = populatedPosts.map((post) => {
       const media = mediaMap.get(post._id.toString()) || [];
 
       let sharedPost = null;
       if (post.shared_post_id) {
-        const sharedMedia =
-          mediaMap.get(post.shared_post_id._id.toString()) || [];
+        const sharedAuthor = post.shared_post_id.user_id;
+
+        // Nếu user đã bị xoá (is_deleted = true)
+        const isUserDeleted = sharedAuthor?.is_deleted;
         sharedPost = {
           ...post.shared_post_id.toObject(),
-          media: sharedMedia,
+          content: isUserDeleted ? "Post is deleted" : post.shared_post_id.content,
+          author: isUserDeleted ? { username: "User has been deleted", avatar_url: null } : sharedAuthor,
+          media: isUserDeleted ? [] : mediaMap.get(post.shared_post_id._id.toString()) || [],
         };
       }
 
@@ -758,6 +813,7 @@ const getRecommendPost = async (req, res) => {
         ...post,
         media,
         shared_post_id: sharedPost,
+        randomKey: Math.random(),
       };
     });
 
@@ -791,17 +847,31 @@ const getRecommendPost = async (req, res) => {
         // Scoring metadata
         score: scoreResult.score,
         isAd: scoreResult.isAd,
+        adMatches: scoreResult.adMatches,
+        randomKey: post.randomKey,
       };
     });
 
     // Sort by final score
-    scoredPosts.sort((a, b) => b.score - a.score);
+    scoredPosts.sort((a, b) => b.score - a.score || a.randomKey - b.randomKey);
+
+    // ✅ ============== NATURAL MIX ALGORITHM ==============
+    const adPosts = scoredPosts.filter((p) => p.isAd);
+    const organicPosts = scoredPosts.filter((p) => !p.isAd);
+
+    const finalPosts = createNaturalMixFeed(organicPosts, adPosts, {
+      maxAdDensity: 0.30, // 15% là ads (1 ad mỗi ~6-7 posts)
+      minPostsBeforeFirstAd: 3, // Ít nhất 3 bài trước ad đầu tiên
+      minSpacingBetweenAds: 4, // Ít nhất 4 bài giữa 2 ads
+      randomSpacingRange: 2, // Random ±2 bài để tự nhiên hơn
+    });
+    // ✅ ================================================
 
     // Pagination
-    const paginatedPosts = scoredPosts.slice(skip, skip + limit);
+    const paginatedPosts = finalPosts.slice(skip, skip + limit);
 
-    // Get total count (approximate để tránh query chậm)
-    const totalPosts = scoredPosts.length;
+    // Get total count
+    const totalPosts = finalPosts.length;
 
     // Response
     const responseTime = Date.now() - startTime;
@@ -820,7 +890,14 @@ const getRecommendPost = async (req, res) => {
         userLocation: userLocation?.displayName || "Unknown",
         locationSource: userLocation?.source || "none",
         locationCacheHit: req.locationCacheHit || false,
-        adsCount: postAds.length,
+        adsCount: adPosts.length,
+        organicCount: organicPosts.length,
+        adDensity: `${((adPosts.length / finalPosts.length) * 100).toFixed(1)}%`,
+        feedComposition: {
+          totalPosts: finalPosts.length,
+          ads: adPosts.length,
+          organic: organicPosts.length,
+        },
       },
     });
   } catch (err) {
@@ -938,9 +1015,7 @@ const getAllPostsbyUserId = async (req, res) => {
     // Lọc posts có media nếu media_only được truyền vào
     let filteredPosts = postsWithMedia;
     if (media_only && (media_only === "true" || media_only === "1")) {
-      filteredPosts = postsWithMedia.filter(
-        (post) => post.media && post.media.length > 0
-      );
+      filteredPosts = postsWithMedia.filter((post) => post.media && post.media.length > 0);
     }
 
     res.json(filteredPosts);
@@ -948,12 +1023,31 @@ const getAllPostsbyUserId = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+// Cache Fuse instance
+const postFuseCache = new Map();
 
+// Hàm chuẩn hóa tiếng Việt
+function removeAccents(str) {
+  if (!str) return '';
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase();
+}
+
+// Tạo cache key
+function getCacheKey(userId, friendIds) {
+  return `${userId}_${friendIds.sort().join(',')}`;
+};
 const searchPost = async (req, res) => {
-  try {
-    const { query } = req.query;
-    const userId = req.user._id;
+  const { query, page = 1, limit = 10 } = req.query;
+  const userId = req.user._id.toString();
+  const pageNum = parseInt(page, 10);
+  const limitNum = parseInt(limit, 10);
 
+  try {
     // 1. Lấy danh sách bạn bè
     const friendships = await Friendship.find({
       $or: [{ user_id_1: userId }, { user_id_2: userId }],
@@ -961,97 +1055,75 @@ const searchPost = async (req, res) => {
     }).lean();
 
     const friendIds = friendships.map((f) =>
-      f.user_id_1.toString() === userId.toString() ? f.user_id_2 : f.user_id_1
+      f.user_id_1.toString() === userId ? f.user_id_2.toString() : f.user_id_1.toString()
     );
 
-    // 2. Tìm post theo content, kèm điều kiện công khai/bạn bè
-    const posts = await Post.aggregate([
-      {
-        $match: {
-          content: { $regex: query, $options: "i" },
-          is_deleted: false,
-          $or: [
-            { type: "Public" },
-            { type: "Friends", user_id: { $in: [...friendIds, userId] } },
-          ],
-        },
-      },
-      {
-        $lookup: {
-          from: "postreactions",
-          localField: "_id",
-          foreignField: "post_id",
-          as: "reactions",
-        },
-      },
-      {
-        $lookup: {
-          from: "comments",
-          let: { postId: "$_id" },
-          pipeline: [
-            {
-              $match: {
-                $expr: { $eq: ["$post_id", "$$postId"] },
-                is_deleted: false,
-              },
-            },
-          ],
-          as: "comments",
-        },
-      },
-      {
-        $lookup: {
-          from: "posts",
-          let: { postId: "$_id" },
-          pipeline: [
-            {
-              $match: {
-                $expr: { $eq: ["$shared_post_id", "$$postId"] },
-                is_deleted: false,
-              },
-            },
-            { $count: "count" },
-          ],
-          as: "shares_count",
-        },
-      },
-      {
-        $addFields: {
-          reactionCount: { $size: "$reactions" },
-          commentCount: { $size: "$comments" },
-          shares_count: {
-            $ifNull: [{ $arrayElemAt: ["$shares_count.count", 0] }, 0],
-          },
-        },
-      },
-      { $sort: { createdAt: -1 } }, // vẫn sort theo mới nhất
-    ]);
+    // 2. Lấy tất cả bài post (chỉ cần field cần thiết)
+    const posts = await Post.find({
+      is_deleted: false,
+      $or: [
+        { type: "Public" },
+        { type: "Friends", user_id: { $in: [...friendIds, userId] } },
+      ],
+    })
+      .lean()
+      .select('_id content user_id type createdAt')
+      .sort({ createdAt: -1 });
 
-    // 3. Populate author & shared_post
-    const populatedPosts = await Post.populate(posts, [
-      {
-        path: "user_id",
-        select: "username avatar_url fullName",
-      },
-      {
-        path: "shared_post_id",
-        populate: {
-          path: "user_id",
-          select: "username avatar_url fullName",
-        },
-      },
-    ]);
+    if (posts.length === 0) {
+      return res.json({ data: [], total: 0, page: pageNum, limit: limitNum });
+    }
 
-    // 4. Gắn media
-    const postsWithMedia = await Promise.all(
-      populatedPosts.map(async (post) => {
-        const postMedia = await PostMedia.findOne({
-          post_id: post._id,
-        }).populate("media_id");
+    // 3. Tạo Fuse instance (cache theo user + bạn bè)
+    const cacheKey = getCacheKey(userId, friendIds);
+    let fuse = postFuseCache.get(cacheKey);
+
+    if (!fuse) {
+      fuse = new Fuse(posts, {
+        keys: ['content'],
+        threshold: 0.4,
+        includeScore: true,
+        shouldSort: true,
+        minMatchCharLength: 1,
+        ignoreLocation: true,
+        getFn: (obj, path) => removeAccents(obj[path] || ''),
+      });
+      postFuseCache.set(cacheKey, fuse);
+
+      // Dọn cache cũ
+      if (postFuseCache.size > 50) {
+        const firstKey = postFuseCache.keys().next().value;
+        postFuseCache.delete(firstKey);
+      }
+    }
+
+    // 4. Tìm kiếm với Fuse.js
+    let results = posts;
+    if (query && query.trim()) {
+      const fuseResults = fuse.search(query.trim());
+      results = fuseResults.map(r => r.item);
+    }
+
+    // 5. Phân trang
+    const total = results.length;
+    const start = (pageNum - 1) * limitNum;
+    const end = start + limitNum;
+    const paginated = results.slice(start, end);
+
+    // 6. Gắn media + author + reactions + comments + shares (song song)
+    const postsWithDetails = await Promise.all(
+      paginated.map(async (post) => {
+        const [author, reactions, comments, shares, postMedia] = await Promise.all([
+          User.findById(post.user_id).lean().select('username avatar_url fullName'),
+          PostReaction.countDocuments({ post_id: post._id }),
+          commentModel.countDocuments({ post_id: post._id, is_deleted: false }),
+          Post.countDocuments({ shared_post_id: post._id, is_deleted: false }),
+          postMediaModel.findOne({ post_id: post._id }).populate('media_id').lean(),
+        ]);
 
         let media = [];
         if (postMedia?.media_id?.length > 0) {
-          media = postMedia.media_id.map((m) => ({
+          media = postMedia.media_id.map(m => ({
             url: m.url,
             type: m.media_type,
           }));
@@ -1059,36 +1131,54 @@ const searchPost = async (req, res) => {
 
         let sharedPost = null;
         if (post.shared_post_id) {
-          const sharedPostMedia = await PostMedia.findOne({
-            post_id: post.shared_post_id._id,
-          }).populate("media_id");
+          const shared = await Post.findById(post.shared_post_id)
+            .lean()
+            .select('_id content user_id')
+            .populate({
+              path: 'user_id',
+              select: 'username avatar_url fullName',
+            });
 
-          let sharedMedia = [];
-          if (sharedPostMedia?.media_id?.length > 0) {
-            sharedMedia = sharedPostMedia.media_id.map((m) => ({
+          if (shared) {
+            const sharedMedia = await PostMedia.findOne({ post_id: shared._id })
+              .populate('media_id')
+              .lean();
+            const sharedMediaList = sharedMedia?.media_id?.map(m => ({
               url: m.url,
               type: m.media_type,
-            }));
-          }
+            })) || [];
 
-          sharedPost = {
-            ...post.shared_post_id.toObject(),
-            media: sharedMedia,
-          };
+            sharedPost = {
+              ...shared,
+              author: shared.user_id,
+              media: sharedMediaList,
+            };
+          }
         }
 
         return {
           ...post,
-          author: post.user_id,
+          author: author || null,
           media,
           shared_post_id: sharedPost,
+          reactionCount: reactions,
+          commentCount: comments,
+          shares_count: shares,
         };
       })
     );
 
-    res.json(postsWithMedia);
+    // 7. Trả về
+    res.json({
+      data: postsWithDetails,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      hasMore: end < total,
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('Search post error:', err);
+    res.status(500).json({ error: 'Lỗi tìm kiếm bài viết' });
   }
 };
 
@@ -1172,17 +1262,10 @@ const increaseViewCount = async (req, res) => {
       const adsAfterUpdate = await adsModel.findById(adsBeforeUpdate._id);
 
       // Tạo progress activities (25%, 50%, 75%)
-      await createProgressActivities(
-        adsAfterUpdate,
-        adsBeforeUpdate.current_views,
-        adsAfterUpdate.current_views
-      );
+      await createProgressActivities(adsAfterUpdate, adsBeforeUpdate.current_views, adsAfterUpdate.current_views);
 
       // Tạo completed activity
-      if (
-        adsAfterUpdate.status === "completed" &&
-        adsBeforeUpdate.status === "active"
-      ) {
+      if (adsAfterUpdate.status === "completed" && adsBeforeUpdate.status === "active") {
         await Activity.create({
           user_id: adsAfterUpdate.user_id,
           ads_id: adsAfterUpdate._id,

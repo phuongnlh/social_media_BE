@@ -8,12 +8,13 @@ const Friendship = require("../models/friendship.model");
 const speakeasy = require("speakeasy");
 const qrcode = require("qrcode");
 const { default: mongoose } = require("mongoose");
+const FCMToken = require("../models/fcm_tokens.model");
 // Đăng ký tài khoản người dùng mới
 const registerUser = async (req, res) => {
   try {
     const { fullName, email, password, gender, dateOfBirth, location } = req.body;
     // Kiểm tra email đã tồn tại hay chưa
-    const checkUser = await User.findOne({ email });
+    const checkUser = await User.findOne({ email, is_deleted: false });
     if (checkUser) {
       return res.status(400).json({ message: "Email already exists." });
     }
@@ -82,7 +83,7 @@ const resendVerification = async (req, res) => {
   const { email } = req.body;
   try {
     // Find user by email
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email, is_deleted: false });
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -124,7 +125,7 @@ const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
     // Tìm người dùng theo email
-    const user = await User.findOne({ email: email });
+    const user = await User.findOne({ email: email, is_deleted: false });
     if (!user) {
       return res.status(403).json({ message: "Email or Password invalid!" });
     }
@@ -168,7 +169,7 @@ const loginUser = async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
     // Trả về access token cho client
-    res.status(200).json({ accessToken });
+    res.status(200).json({ accessToken, refreshToken });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
@@ -179,39 +180,69 @@ const logoutUser = async (req, res) => {
   try {
     const token = req.headers.authorization?.split(" ")[1];
     const refreshToken = req.cookies.refreshToken;
+    const { deviceId, platform } = req.body;
 
     if (!token || !refreshToken) {
       return res.status(400).json({ message: "Thiếu token" });
     }
 
-    // Đưa access token vào blacklist để vô hiệu hóa
-    const decoded = verifyToken(token);
-    const exp = decoded?.exp;
-    const ttl = exp - Math.floor(Date.now() / 1000); // Thời gian còn lại của token
-
-    if (ttl > 0) {
-      await redisClient.set(`blacklist:${token}`, "true", { EX: ttl });
+    // ✅ Giải mã access token để lấy exp
+    let decoded;
+    try {
+      decoded = verifyToken(token);
+    } catch {
+      decoded = null; // nếu access token invalid vẫn cho logout
     }
 
-    // Xóa refresh token trong Redis
-    const refreshPayload = verifyToken(refreshToken);
-    const refreshKey = `refresh:${refreshPayload.id}:${refreshToken}`;
-    const userRefreshTokensSet = `user-sessions:${refreshPayload.id}`;
+    // ✅ Đưa access token vào blacklist (nếu còn hạn)
+    if (decoded?.exp) {
+      const ttl = decoded.exp - Math.floor(Date.now() / 1000);
+      if (ttl > 0) {
+        await redisClient.set(`blacklist:${token}`, "true", { EX: ttl });
+      }
+    }
 
-    // Dùng multi để đảm bảo cả hai lệnh cùng được thực thi
-    const multi = redisClient.multi();
-    multi.del(refreshKey); // Xóa key của token cụ thể
-    multi.sRem(userRefreshTokensSet, refreshToken); // Xóa token khỏi Set các phiên
-    await multi.exec();
+    // ✅ Xử lý refresh token
+    let refreshPayload;
+    try {
+      refreshPayload = verifyToken(refreshToken);
+    } catch {
+      refreshPayload = null;
+    }
 
-    // Xóa cookie refresh token
-    res.clearCookie("refreshToken");
+    if (refreshPayload?.id) {
+      const refreshKey = `refresh:${refreshPayload.id}:${refreshToken}`;
+      const userSessionsSet = `user-sessions:${refreshPayload.id}`;
+      await redisClient.multi().del(refreshKey).sRem(userSessionsSet, refreshToken).exec();
+    }
 
-    res.json({ message: "Logout successful" });
+    // ✅ Xóa FCM token đúng thiết bị
+    if (deviceId && platform) {
+      try {
+        await FCMToken.deleteMany({
+          user_id: refreshPayload?.id,
+          deviceId,
+          platform,
+        });
+      } catch (dbErr) {
+        console.error("FCM cleanup failed:", dbErr.message);
+      }
+    }
+
+    // ✅ Xóa cookie refresh token
+    res.clearCookie("refreshToken", {
+      httpOnly: true,
+      secure: false,
+      sameSite: "Lax",
+    });
+
+    return res.json({ message: "Logout successful" });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error("Logout error:", err);
+    return res.status(500).json({ message: "Internal server error" });
   }
 };
+
 
 // Đăng xuất tất cả các phiên của người dùng
 const logoutAllUser = async (req, res) => {
@@ -253,7 +284,7 @@ const logoutAllUser = async (req, res) => {
     // Xóa cookie
     res.clearCookie("refreshToken");
 
-    res.json({ message: "Đã đăng xuất tất cả các phiên thành công" });
+    res.status(200).json({ message: "Logout all sessions successful" });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -263,7 +294,7 @@ const logoutAllUser = async (req, res) => {
 const changePassword = async (req, res) => {
   try {
     const userId = req.user._id; // Đã được xác thực từ middleware
-    const { oldPassword, newPassword } = req.body;
+    const { oldPassword, newPassword, deviceId, platform } = req.body;
 
     if (!oldPassword || !newPassword) {
       return res.status(400).json({ success: false, message: "Missing password fields" });
@@ -305,6 +336,19 @@ const changePassword = async (req, res) => {
       await multi.exec();
     }
 
+    // ✅ Xóa FCM token đúng thiết bị
+    if (deviceId && platform) {
+      try {
+        await FCMToken.deleteMany({
+          user_id: userId,
+          deviceId,
+          platform,
+        });
+      } catch (dbErr) {
+        console.error("FCM cleanup failed:", dbErr.message);
+      }
+    }
+
     // Xóa cookie của phiên hiện tại
     res.clearCookie("refreshToken");
 
@@ -322,7 +366,7 @@ const forgotPassword = async (req, res) => {
   const { email } = req.body;
   try {
     // Tìm người dùng theo email
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email, is_deleted: false });
     if (!user) return res.status(400).json({ message: "Không tìm thấy email" });
 
     // Tạo token khôi phục mật khẩu
@@ -578,6 +622,7 @@ const getProfileWithPrivacy = async (req, res) => {
           fullName: user.fullName,
           avatar_url: user.avatar_url,
           cover_photo_url: user.cover_photo_url,
+          location: user.location,
           bio: null,
           email: null,
         },
@@ -600,6 +645,7 @@ const getProfileWithPrivacy = async (req, res) => {
             fullName: user.fullName,
             avatar_url: user.avatar_url,
             cover_photo_url: user.cover_photo_url,
+            location: user.location,
             bio: null,
             email: null,
           },
@@ -628,7 +674,8 @@ const getProfileWithPrivacy = async (req, res) => {
       fullName: user.fullName,
       avatar_url: user.avatar_url,
       cover_photo_url: user.cover_photo_url,
-      bio: (await canView("profile")) ? user.bio : null,
+      location: user.location,
+      bio: user.bio,
       email: (await canView("profile.email")) ? user.email : null,
     };
 
@@ -749,9 +796,9 @@ const verifyTwoFALogin = async (req, res) => {
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
       // Trả về access token cho client
-      res.status(200).json({ accessToken });
+      res.status(200).json({ accessToken, refreshToken });
     } else {
-      return res.status(400).json({ message: "Mã xác thực 2FA không hợp lệ" });
+      return res.status(400).json({ message: "TwoFA code isn't valid" });
     }
   } catch (error) {
     console.error("Lỗi kích hoạt 2FA:", error);

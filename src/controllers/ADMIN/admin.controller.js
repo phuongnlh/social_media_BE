@@ -672,9 +672,6 @@ const deleteUserById = async (req, res) => {
   try {
     const { userId } = req.params;
     await User.findByIdAndUpdate(userId, {
-      fullName: "Deleted User",
-      email: null,
-      username: null,
       avatar_url: "https://minio.dailyvibe.online/dailyvibe/avatars/avatar.jpg",
       is_deleted: true,
       isActive: false,
