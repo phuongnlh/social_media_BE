@@ -1,4 +1,4 @@
-import admin from "firebase-admin";
+const admin = require("firebase-admin");
 import serviceAccount from "../../google-services.json" assert { type: "json" };
 if (!admin.apps.length) {
   admin.initializeApp({
