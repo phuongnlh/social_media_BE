@@ -78,35 +78,35 @@ router.post("/email-templates", isAdmin, emailTemplateController.saveTemplate);
 router.get("/posts", postController.getAllPosts);
 router.patch("/posts/:postId", isAdmin, postController.updatePostDeleteStatus);
 router.get("/posts/stats", isAdmin, postController.getPostStats);
-router.get("/posts/reports/resolved", postController.getAllResolvedPostReports);
-router.get('/posts/reports/by-status', postController.getAllPostReportsByStatus);
-router.patch('/posts/reports/:postId/dismiss-all', postController.dismissAllPendingReportsOfPost);
+router.get("/posts/reports/resolved", isAdmin, postController.getAllResolvedPostReports);
+router.get('/posts/reports/by-status', isAdmin, postController.getAllPostReportsByStatus);
+router.patch('/posts/reports/:postId/dismiss-all', isAdmin, postController.dismissAllPendingReportsOfPost);
 router.patch("/posts/reports/:postId/mark-investigating", isAdmin, postController.markPostAsInvestigating);
-router.get("/posts/statistics", postController.getPostStatistics);
+router.get("/posts/statistics", isAdmin, postController.getPostStatistics);
 
 //*==============================================================
 //*================== ADMIN Group MANAGEMENT ====================
 //*==============================================================
-router.get("/groups", groupAdminController.getAllGroupsWithStats);
-router.get("/groups/reports", groupAdminController.getAllGroupReportsByStatus);
-router.get("/groups/statistics", groupAdminController.getGroupStatistics);
-router.get("/groups/reports/resolved", groupAdminController.getAllResolvedGroupReports);
-router.patch("/groups/:groupId/reports/dismiss", groupAdminController.dismissAllPendingReportsOfGroup);
-router.post("/groups/:groupId/reports/send-warning", groupAdminController.sendWarningToGroup);
-router.patch("/groups/:groupId/mark-investigating", groupAdminController.markGroupAsInvestigating);
+router.get("/groups", isAdmin, groupAdminController.getAllGroupsWithStats);
+router.get("/groups/reports", isAdmin, groupAdminController.getAllGroupReportsByStatus);
+router.get("/groups/statistics", isAdmin, groupAdminController.getGroupStatistics);
+router.get("/groups/reports/resolved", isAdmin, groupAdminController.getAllResolvedGroupReports);
+router.patch("/groups/:groupId/reports/dismiss", isAdmin, groupAdminController.dismissAllPendingReportsOfGroup);
+router.post("/groups/:groupId/reports/send-warning", isAdmin, groupAdminController.sendWarningToGroup);
+router.patch("/groups/:groupId/mark-investigating", isAdmin, groupAdminController.markGroupAsInvestigating);
 router.get("/groups/:group_id/posts", groupAdminController.getAllPostsInGroupForAdmin);
-router.delete("/groups/:groupId", groupAdminController.deleteGroupForSevereViolation);
+router.delete("/groups/:groupId", isAdmin, groupAdminController.deleteGroupForSevereViolation);
 
 //*==============================================================
 //*================== ADMIN ADS MANAGEMENT ====================
 //*==============================================================
-router.get("/ads", adsAdminController.getAllAds);
-router.get('/ads/stats', adsAdminController.getAdStats);
-router.get('/ads/report-stats', adsAdminController.getAdsReportsStats);
+router.get("/ads", isAdmin, adsAdminController.getAllAds);
+router.get('/ads/stats', isAdmin, adsAdminController.getAdStats);
+router.get('/ads/report-stats', isAdmin, adsAdminController.getAdsReportsStats);
 router.get('/ads/:id', adsAdminController.getAdDetails);
-router.delete('/ads/:id', adsAdminController.deleteAd);
-router.get('/ads/reports/by-status', adsAdminController.getAllAdsReportsByStatus);
-router.get('/ads/reports/resolved', adsAdminController.getAllResolvedAdsReports);
-router.patch('/ads/reports/:postId/dismiss-all', adsAdminController.dismissAllPendingReportsOfAd);
-router.patch('/ads/reports/:postId/mark-investigating', adsAdminController.markAdAsInvestigating);
+router.delete('/ads/:id', isAdmin, adsAdminController.deleteAd);
+router.get('/ads/reports/by-status', isAdmin, adsAdminController.getAllAdsReportsByStatus);
+router.get('/ads/reports/resolved', isAdmin, adsAdminController.getAllResolvedAdsReports);
+router.patch('/ads/reports/:postId/dismiss-all', isAdmin, adsAdminController.dismissAllPendingReportsOfAd);
+router.patch('/ads/reports/:postId/mark-investigating', isAdmin, adsAdminController.markAdAsInvestigating);
 module.exports = router;
