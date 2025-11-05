@@ -4,7 +4,7 @@ const notificationService = require("../services/notification.service");
 const { getSocketIO, getNotificationUserSocketMap } = require("../socket/io-instance");
 const postModel = require("../models/post.model");
 const { default: mongoose } = require("mongoose");
-const { default: Fuse } = require("fuse.js");
+const Fuse = require("fuse.js");
 
 // Gửi lời mời kết bạn đến một người dùng khác
 const sendFriendRequest = async (req, res) => {
