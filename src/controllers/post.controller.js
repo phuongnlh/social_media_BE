@@ -1078,7 +1078,7 @@ const searchPost = async (req, res) => {
     const cacheKey = getCacheKey(userId, friendIds);
     let fuse = postFuseCache.get(cacheKey);
 
-    if (!fuse || fuse.list.length !== posts.length) {
+    if (!fuse) {
       fuse = new Fuse(posts, {
         keys: ['content'],
         threshold: 0.4,

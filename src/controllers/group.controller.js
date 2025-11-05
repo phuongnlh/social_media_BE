@@ -980,7 +980,7 @@ function getGlobalCacheKey() {
 const searchGroups = async (req, res) => {
   const { query, page = 1, limit = 12 } = req.query;
   const user_id = req.user?._id?.toString();
-  const trimmedQuery = (query)?.trim();
+  const trimmedQuery = query?.trim();
   const pageNum = parseInt(page, 10);
   const limitNum = parseInt(limit, 10);
 
@@ -999,7 +999,7 @@ const searchGroups = async (req, res) => {
     const cacheKey = getGlobalCacheKey();
     let fuse = fuseCache.get(cacheKey);
 
-    if (!fuse || fuse.list.length !== groups.length) {
+    if (!fuse) {
       fuse = new Fuse(groups, {
         keys: [
           { name: 'name', weight: 1.0 },

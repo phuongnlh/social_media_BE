@@ -361,7 +361,7 @@ const searchFriends = async (req, res) => {
       const cacheKey = getGlobalCacheKey();
       let fuse = fuseCache.get(cacheKey);
 
-      if (!fuse || fuse.list.length !== users.length) {
+      if (!fuse) {
         fuse = new Fuse(users, {
           keys: [
             { name: 'fullName', weight: 1.0 },
@@ -444,7 +444,7 @@ const searchMyFriends = async (req, res) => {
       );
       let fuse = fuseCache.get(cacheKey);
 
-      if (!fuse || fuse.list.length !== friends.length) {
+      if (!fuse) {
         fuse = new Fuse(friends, {
           keys: ["fullName"],
           threshold: 0.4,
