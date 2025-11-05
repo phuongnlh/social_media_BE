@@ -12,13 +12,16 @@ const {
   getPostStats,
   getUserGrowth,
   getDailyInteractions,
+  getPaymentAnalytics,
+  getPaymentSummary,
+  getPaymentMethodStats,
 } = require("../controllers/ADMIN/dashboard.controller");
 const postController = require("../controllers/ADMIN/postManagement");
 const emailTemplateController = require("../controllers/ADMIN/emailTemplate.controller");
 const { refreshAccessAdminToken, loginAdmin, logoutAdmin } = require("../controllers/ADMIN/authAdmin.controller");
 const { isAdmin } = require("../middlewares/auth");
-const reportController = require("../controllers/ADMIN/report.controller");
 const groupAdminController = require("../controllers/ADMIN/groupAdmin.controller");
+const adsAdminController = require("../controllers/ADMIN/adsAdmin.controller");
 const minioClient = require("../config/minioClient.storage");
 const router = express.Router();
 
@@ -44,6 +47,9 @@ router.get("/dashboard/post-stats", getPostStats);
 router.get("/dashboard/user-growth", getUserGrowth);
 router.get("/dashboard/daily-interactions", getDailyInteractions);
 router.get("/dashboard", getAnalytics);
+router.get('/dashboard/payment-analytics', getPaymentAnalytics);
+router.get('/dashboard/payment-summary', getPaymentSummary);
+router.get('/dashboard/payment-method-stats', getPaymentMethodStats);
 
 router.post("/upload/update", isAdmin, async (req, res) => {
   const { oldFilePath } = req.body;
@@ -60,18 +66,6 @@ router.post("/upload/update", isAdmin, async (req, res) => {
 });
 
 //*==============================================================
-//*===================== ADMIN REPORTS ==========================
-//*==============================================================
-router.get("/reports", isAdmin, reportController.getReports);
-router.get("/reports/stats", isAdmin, reportController.getReportStats);
-router.get("/reports/:id", isAdmin, reportController.getReportById); // Lấy chi tiết báo cáo (Admin)
-router.patch("/reports/:id/status", isAdmin, reportController.updateReportStatus); // Cập nhật trạng thái báo cáo (Admin)
-router.patch("/reports/:id/assign", isAdmin, reportController.assignReport); // Gán báo cáo cho admin (Admin)
-router.post("/reports/:id/notes", isAdmin, reportController.addAdminNote); // Thêm ghi chú admin (Admin)
-router.patch("/reports/:id/resolve", isAdmin, reportController.resolveReport); // Giải quyết báo cáo (Admin)
-router.patch("/reports/bulk-update", isAdmin, reportController.bulkUpdateReports); // Bulk update báo cáo (Admin)
-
-//*==============================================================
 //*================== ADMIN EMAIL TEMPLATES =====================
 //*==============================================================
 router.get("/email-templates", isAdmin, emailTemplateController.getAllTemplates);
@@ -81,9 +75,14 @@ router.post("/email-templates", isAdmin, emailTemplateController.saveTemplate);
 //*==============================================================
 //*================== ADMIN POST MANAGEMENT =====================
 //*==============================================================
+router.get("/posts", postController.getAllPosts);
+router.patch("/posts/:postId", isAdmin, postController.updatePostDeleteStatus);
 router.get("/posts/stats", isAdmin, postController.getPostStats);
-router.get("/posts", isAdmin, postController.getAllPosts);
-
+router.get("/posts/reports/resolved", postController.getAllResolvedPostReports);
+router.get('/posts/reports/by-status', postController.getAllPostReportsByStatus);
+router.patch('/posts/reports/:postId/dismiss-all', postController.dismissAllPendingReportsOfPost);
+router.patch("/posts/reports/:postId/mark-investigating", isAdmin, postController.markPostAsInvestigating);
+router.get("/posts/statistics", postController.getPostStatistics);
 
 //*==============================================================
 //*================== ADMIN Group MANAGEMENT ====================
@@ -98,4 +97,8 @@ router.patch("/groups/:groupId/mark-investigating", groupAdminController.markGro
 router.get("/groups/:group_id/posts", groupAdminController.getAllPostsInGroupForAdmin);
 router.delete("/groups/:groupId", groupAdminController.deleteGroupForSevereViolation);
 
+//*==============================================================
+//*================== ADMIN ADS MANAGEMENT ====================
+//*==============================================================
+router.get("/ads", adsAdminController.getAllAds);
 module.exports = router;
