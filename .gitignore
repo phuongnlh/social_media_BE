@@ -50,3 +50,4 @@ pids/
 *.pid.lock
 
 google-services.json
+admin-google-services.json
