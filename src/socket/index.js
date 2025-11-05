@@ -5,6 +5,8 @@ const notificationService = require("../services/notification.service");
 const { setSocketIO } = require("./io-instance");
 const redisClient = require("../config/database.redis");
 const dayjs = require("dayjs");
+const { sendFcmNotification } = require("../utils/fcm");
+const FCMToken = require("../models/fcm_tokens.model");
 
 const userSocketMap = new Map(); // userId => socket.id
 const messageUserSocketMap = new Map(); // userId => socket.id cho messaging
@@ -88,6 +90,20 @@ module.exports = (io) => {
             for (const socketId of memberSocketIds) {
               messagesNamespace.to(socketId).emit("receive_message", messageWithChannel);
             }
+          } else {
+            // Lấy tất cả token của người nhận
+            const tokens = await FCMToken.find({ userId: memberId }).distinct("token");
+
+            // Gửi thông báo FCM
+            await sendFcmNotification(
+              tokens,
+              "💬 New message",
+              `${messageWithChannel.from.fullName} has sent a message`,
+              {
+                type: "new_message",
+                channelId: messageWithChannel.channelId,
+              }
+            );
           }
         }
 
