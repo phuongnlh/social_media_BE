@@ -8,6 +8,7 @@ const Friendship = require("../models/friendship.model");
 const speakeasy = require("speakeasy");
 const qrcode = require("qrcode");
 const { default: mongoose } = require("mongoose");
+const FCMToken = require("../models/fcm_tokens.model");
 // Đăng ký tài khoản người dùng mới
 const registerUser = async (req, res) => {
   try {
@@ -179,39 +180,69 @@ const logoutUser = async (req, res) => {
   try {
     const token = req.headers.authorization?.split(" ")[1];
     const refreshToken = req.cookies.refreshToken;
+    const { deviceId, platform } = req.body;
 
     if (!token || !refreshToken) {
       return res.status(400).json({ message: "Thiếu token" });
     }
 
-    // Đưa access token vào blacklist để vô hiệu hóa
-    const decoded = verifyToken(token);
-    const exp = decoded?.exp;
-    const ttl = exp - Math.floor(Date.now() / 1000); // Thời gian còn lại của token
-
-    if (ttl > 0) {
-      await redisClient.set(`blacklist:${token}`, "true", { EX: ttl });
+    // ✅ Giải mã access token để lấy exp
+    let decoded;
+    try {
+      decoded = verifyToken(token);
+    } catch {
+      decoded = null; // nếu access token invalid vẫn cho logout
     }
 
-    // Xóa refresh token trong Redis
-    const refreshPayload = verifyToken(refreshToken);
-    const refreshKey = `refresh:${refreshPayload.id}:${refreshToken}`;
-    const userRefreshTokensSet = `user-sessions:${refreshPayload.id}`;
+    // ✅ Đưa access token vào blacklist (nếu còn hạn)
+    if (decoded?.exp) {
+      const ttl = decoded.exp - Math.floor(Date.now() / 1000);
+      if (ttl > 0) {
+        await redisClient.set(`blacklist:${token}`, "true", { EX: ttl });
+      }
+    }
 
-    // Dùng multi để đảm bảo cả hai lệnh cùng được thực thi
-    const multi = redisClient.multi();
-    multi.del(refreshKey); // Xóa key của token cụ thể
-    multi.sRem(userRefreshTokensSet, refreshToken); // Xóa token khỏi Set các phiên
-    await multi.exec();
+    // ✅ Xử lý refresh token
+    let refreshPayload;
+    try {
+      refreshPayload = verifyToken(refreshToken);
+    } catch {
+      refreshPayload = null;
+    }
 
-    // Xóa cookie refresh token
-    res.clearCookie("refreshToken");
+    if (refreshPayload?.id) {
+      const refreshKey = `refresh:${refreshPayload.id}:${refreshToken}`;
+      const userSessionsSet = `user-sessions:${refreshPayload.id}`;
+      await redisClient.multi().del(refreshKey).sRem(userSessionsSet, refreshToken).exec();
+    }
 
-    res.json({ message: "Logout successful" });
+    // ✅ Xóa FCM token đúng thiết bị
+    if (deviceId && platform) {
+      try {
+        await FCMToken.deleteMany({
+          user_id: refreshPayload?.id,
+          deviceId,
+          platform,
+        });
+      } catch (dbErr) {
+        console.error("FCM cleanup failed:", dbErr.message);
+      }
+    }
+
+    // ✅ Xóa cookie refresh token
+    res.clearCookie("refreshToken", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "Lax",
+    });
+
+    return res.json({ message: "Logout successful" });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error("Logout error:", err);
+    return res.status(500).json({ message: "Internal server error" });
   }
 };
+
 
 // Đăng xuất tất cả các phiên của người dùng
 const logoutAllUser = async (req, res) => {
@@ -263,7 +294,7 @@ const logoutAllUser = async (req, res) => {
 const changePassword = async (req, res) => {
   try {
     const userId = req.user._id; // Đã được xác thực từ middleware
-    const { oldPassword, newPassword } = req.body;
+    const { oldPassword, newPassword, deviceId, platform } = req.body;
 
     if (!oldPassword || !newPassword) {
       return res.status(400).json({ success: false, message: "Missing password fields" });
@@ -303,6 +334,19 @@ const changePassword = async (req, res) => {
       });
       multi.del(userRefreshTokensSet);
       await multi.exec();
+    }
+
+    // ✅ Xóa FCM token đúng thiết bị
+    if (deviceId && platform) {
+      try {
+        await FCMToken.deleteMany({
+          user_id: userId,
+          deviceId,
+          platform,
+        });
+      } catch (dbErr) {
+        console.error("FCM cleanup failed:", dbErr.message);
+      }
     }
 
     // Xóa cookie của phiên hiện tại
