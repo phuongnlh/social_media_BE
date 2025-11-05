@@ -522,15 +522,14 @@ function createNaturalMixFeed(organicPosts, adPosts, config = {}) {
     return organicPosts;
   }
 
-  // Giới hạn số ads theo maxAdDensity
-  const totalPosts = organicPosts.length + adPosts.length;
-  const maxAdsAllowed = Math.floor(totalPosts * maxAdDensity);
-  const adsToUse = adPosts.slice(0, maxAdsAllowed);
-
-  // Nếu không có organic posts, chỉ trả về ads
   if (!organicPosts.length) {
-    return adsToUse;
+    return adPosts;
   }
+
+  // Giới hạn số ads theo maxAdDensity
+  const maxAdsAllowed = Math.floor((organicPosts.length * maxAdDensity) / (1 - maxAdDensity));
+  const adsToUse = adPosts.slice(0, Math.min(maxAdsAllowed, adPosts.length));
+  const totalPosts = organicPosts.length + adsToUse.length;
 
   // ✅ TÍNH TOÁN VỊ TRÍ QUẢNG CÁO
   const adPositions = calculateAdPositions(organicPosts.length, adsToUse.length, {
