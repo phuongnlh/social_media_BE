@@ -101,4 +101,12 @@ router.delete("/groups/:groupId", groupAdminController.deleteGroupForSevereViola
 //*================== ADMIN ADS MANAGEMENT ====================
 //*==============================================================
 router.get("/ads", adsAdminController.getAllAds);
+router.get('/ads/stats', adsAdminController.getAdStats);
+router.get('/ads/report-stats', adsAdminController.getAdsReportsStats);
+router.get('/ads/:id', adsAdminController.getAdDetails);
+router.delete('/ads/:id', adsAdminController.deleteAd);
+router.get('/ads/reports/by-status', adsAdminController.getAllAdsReportsByStatus);
+router.get('/ads/reports/resolved', adsAdminController.getAllResolvedAdsReports);
+router.patch('/ads/reports/:postId/dismiss-all', adsAdminController.dismissAllPendingReportsOfAd);
+router.patch('/ads/reports/:postId/mark-investigating', adsAdminController.markAdAsInvestigating);
 module.exports = router;
