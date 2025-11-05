@@ -15,6 +15,9 @@ const { getSocketIO, getUserSocketMap, getNotificationUserSocketMap } = require(
 const moderationService = require("../queues/moderationQueue");
 const NodeCache = require("node-cache");
 const { calculatePostScore } = require("../services/scoring.service");
+const User = require("../models/user.model");
+const commentModel = require("../models/Comment_Reaction/comment.model");
+const postMediaModel = require("../models/postMedia.model");
 
 // Tạo bài đăng mới với tệp media (nếu có)
 const createPost = async (req, res) => {
@@ -1113,9 +1116,9 @@ const searchPost = async (req, res) => {
         const [author, reactions, comments, shares, postMedia] = await Promise.all([
           User.findById(post.user_id).lean().select('username avatar_url fullName'),
           PostReaction.countDocuments({ post_id: post._id }),
-          Comment.countDocuments({ post_id: post._id, is_deleted: false }),
+          commentModel.countDocuments({ post_id: post._id, is_deleted: false }),
           Post.countDocuments({ shared_post_id: post._id, is_deleted: false }),
-          PostMedia.findOne({ post_id: post._id }).populate('media_id').lean(),
+          postMediaModel.findOne({ post_id: post._id }).populate('media_id').lean(),
         ]);
 
         let media = [];
