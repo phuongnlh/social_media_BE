@@ -10,6 +10,8 @@ const GroupReport = require("../models/Group/groupReport.model");
 const notificationService = require("../services/notification.service");
 const { Types } = require("mongoose");
 const { getSocketIO, getUserSocketMap } = require("../socket/io-instance");
+const Fuse = require("fuse.js");
+const group_memberModel = require("../models/Group/group_member.model");
 
 // Hàm kiểm tra quyền admin trong group
 const isGroupAdmin = async (group_id, user_id) => {
@@ -959,29 +961,87 @@ const getUserGroups = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+const fuseCache = new Map();
+
+function removeAccents(str) {
+  if (!str) return '';
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase();
+}
+
+function getGlobalCacheKey() {
+  return 'global_group_search';
+}
 
 const searchGroups = async (req, res) => {
+  const { query, page = 1, limit = 12 } = req.query;
+  const user_id = req.user?._id?.toString();
+  const trimmedQuery = (query)?.trim();
+  const pageNum = parseInt(page, 10);
+  const limitNum = parseInt(limit, 10);
+
   try {
-    const { query } = req.query;
-    const user_id = req.user?._id;
+    // 1. Lấy tất cả group (chỉ cần field cần thiết)
+    const groups = await Group.find({ is_deleted: false })
+      .lean()
+      .select('_id name description cover_url privacy created_at')
+      .sort({ created_at: -1 });
 
-    const groups = await Group.find({
-      name: { $regex: query, $options: "i" },
-    });
+    if (groups.length === 0) {
+      return res.json({ data: [], total: 0, page: pageNum, limit: limitNum });
+    }
 
-    const groupsWithStats = await Promise.all(
-      groups.map(async (group) => {
+    // 2. Tạo Fuse instance (cache toàn cục)
+    const cacheKey = getGlobalCacheKey();
+    let fuse = fuseCache.get(cacheKey);
+
+    if (!fuse || fuse.list.length !== groups.length) {
+      fuse = new Fuse(groups, {
+        keys: [
+          { name: 'name', weight: 1.0 },
+          { name: 'description', weight: 0.7 },
+        ],
+        threshold: 0.4,
+        includeScore: true,
+        shouldSort: true,
+        minMatchCharLength: 1,
+        ignoreLocation: true,
+        getFn: (obj, path) => removeAccents(obj[path] || ''),
+      });
+      fuseCache.set(cacheKey, fuse);
+    }
+
+    // 3. Tìm kiếm với Fuse.js
+    let results = groups;
+    if (trimmedQuery) {
+      const fuseResults = fuse.search(trimmedQuery);
+      results = fuseResults.map(r => r.item);
+    }
+
+    // 4. Phân trang
+    const total = results.length;
+    const start = (pageNum - 1) * limitNum;
+    const end = start + limitNum;
+    const paginated = results.slice(start, end);
+
+    // 5. Gắn stats + isJoined + role (song song)
+    const groupsWithDetails = await Promise.all(
+      paginated.map(async (group) => {
         const stats = await getGroupStats(group._id);
 
         let isJoined = false;
         let role = null;
 
         if (user_id) {
-          const membership = await GroupMember.findOne({
+          const membership = await group_memberModel.findOne({
             group: group._id,
             user: user_id,
             status: "approved",
-          });
+          }).lean();
 
           if (membership) {
             isJoined = true;
@@ -990,7 +1050,12 @@ const searchGroups = async (req, res) => {
         }
 
         return {
-          ...group.toObject(),
+          _id: group._id,
+          name: group.name,
+          description: group.description || "",
+          cover_url: group.cover_url || null,
+          privacy: group.privacy,
+          created_at: group.created_at,
           ...stats,
           lastActivity: stats.lastActivity || group.created_at,
           isJoined,
@@ -999,9 +1064,17 @@ const searchGroups = async (req, res) => {
       })
     );
 
-    res.status(200).json(groupsWithStats);
+    // 6. Trả về
+    res.json({
+      data: groupsWithDetails,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      hasMore: end < total,
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Search groups error:', error);
+    res.status(500).json({ error: 'Lỗi tìm kiếm nhóm' });
   }
 };
 

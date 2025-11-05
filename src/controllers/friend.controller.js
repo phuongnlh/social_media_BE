@@ -339,64 +339,70 @@ function getGlobalCacheKey() {
 
 // Tìm kiếm bạn bè
 const searchFriends = async (req, res) => {
-  const { query } = req.query;
-  const trimmedQuery = query?.trim();
+  const { query, page = 1, limit = 15 } = req.query;
+  const trimmedQuery = (query)?.trim();
+  const pageNum = parseInt(page, 10);
+  const limitNum = parseInt(limit, 10);
 
   try {
     // 1. Lấy người dùng (giới hạn an toàn)
     const users = await User.find({ is_deleted: false })
       .lean()
-      .select("_id fullName avatar_url username bio")
+      .select('_id fullName avatar_url username bio')
       .limit(10000);
 
     if (users.length === 0) {
-      return res.json({ data: [], meta: { total: 0, returned: 0 } });
+      return res.json({ data: [], total: 0, page: pageNum, limit: limitNum });
     }
 
-    let results = users;
-
     // 2. Dùng Fuse.js nếu có query
+    let results = users;
     if (trimmedQuery) {
       const cacheKey = getGlobalCacheKey();
       let fuse = fuseCache.get(cacheKey);
 
-      if (!fuse) {
+      if (!fuse || fuse.list.length !== users.length) {
         fuse = new Fuse(users, {
           keys: [
-            { name: "fullName", weight: 1.0 },
-            { name: "username", weight: 0.9 },
-            { name: "bio", weight: 0.7 },
+            { name: 'fullName', weight: 1.0 },
+            { name: 'username', weight: 0.9 },
+            { name: 'bio', weight: 0.7 },
           ],
           threshold: 0.4,
           includeScore: true,
           shouldSort: true,
           minMatchCharLength: 1,
           ignoreLocation: true,
-          getFn: (obj, path) => removeAccents(obj[path] || ""),
+          getFn: (obj, path) => removeAccents(obj[path] || ''),
         });
         fuseCache.set(cacheKey, fuse);
       }
 
       const fuseResults = fuse.search(trimmedQuery);
-      results = fuseResults.map((r) => ({ ...r.item, _score: r.score }));
+      results = fuseResults.map(r => ({ ...r.item, _score: r.score }));
     }
 
-    // 3. Giới hạn + gắn stats
-    const limited = results.slice(0, 50);
-    const data = await attachUserStats(limited);
+    // 3. Phân trang
+    const total = results.length;
+    const start = (pageNum - 1) * limitNum;
+    const end = start + limitNum;
+    const paginated = results.slice(start, end);
 
+    // 4. Gắn stats (chỉ cho trang hiện tại)
+    const data = await attachUserStats(paginated);
+
+    // 5. Trả về
     res.json({
       data,
-      meta: {
-        total: results.length,
-        returned: data.length,
-        hasMore: results.length > 50,
-        query: trimmedQuery || null,
-      },
+      total,
+      page: pageNum,
+      limit: limitNum,
+      hasMore: end < total,
+      query: trimmedQuery || null,
     });
   } catch (err) {
-    console.error("searchFriends error:", err);
-    res.status(500).json({ error: "Lỗi tìm kiếm" });
+    console.error('searchFriends error:', err);
+    res.status(500).json({ error: 'Lỗi tìm kiếm' });
   }
 };
 
