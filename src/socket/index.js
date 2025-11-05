@@ -92,7 +92,7 @@ module.exports = (io) => {
             }
           } else {
             // Lấy tất cả token của người nhận
-            const tokens = await FCMToken.find({ userId: memberId }).distinct("token");
+            const tokens = await FCMToken.find({ user_id: memberId }).distinct("token");
 
             // Gửi thông báo FCM
             await sendFcmNotification(
