@@ -1,6 +1,6 @@
 const WEIGHTS = {
   // Recency (thời gian)
-  RECENCY_MAX: 100,
+  RECENCY_MAX: 200,
   RECENCY_DECAY_RATE: 0.1, // Giảm 10% mỗi giờ
 
   // Engagement (tương tác)

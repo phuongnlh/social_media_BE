@@ -13,7 +13,7 @@ const registerUser = async (req, res) => {
   try {
     const { fullName, email, password, gender, dateOfBirth, location } = req.body;
     // Kiểm tra email đã tồn tại hay chưa
-    const checkUser = await User.findOne({ email });
+    const checkUser = await User.findOne({ email, is_deleted: false });
     if (checkUser) {
       return res.status(400).json({ message: "Email already exists." });
     }
@@ -82,7 +82,7 @@ const resendVerification = async (req, res) => {
   const { email } = req.body;
   try {
     // Find user by email
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email, is_deleted: false });
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -124,7 +124,7 @@ const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
     // Tìm người dùng theo email
-    const user = await User.findOne({ email: email });
+    const user = await User.findOne({ email: email, is_deleted: false });
     if (!user) {
       return res.status(403).json({ message: "Email or Password invalid!" });
     }
@@ -322,7 +322,7 @@ const forgotPassword = async (req, res) => {
   const { email } = req.body;
   try {
     // Tìm người dùng theo email
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email, is_deleted: false });
     if (!user) return res.status(400).json({ message: "Không tìm thấy email" });
 
     // Tạo token khôi phục mật khẩu

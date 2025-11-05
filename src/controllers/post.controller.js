@@ -662,7 +662,7 @@ const getRecommendPost = async (req, res) => {
         path: "shared_post_id",
         populate: {
           path: "user_id",
-          select: "username avatar_url fullName",
+          select: "username avatar_url fullName is_deleted",
         },
       },
     ]);
@@ -689,16 +689,21 @@ const getRecommendPost = async (req, res) => {
       mediaMap.set(pm.post_id.toString(), media);
     });
 
-    // Attach media to posts
+    // Attach media & handle shared posts
     const postsWithMedia = populatedPosts.map((post) => {
       const media = mediaMap.get(post._id.toString()) || [];
 
       let sharedPost = null;
       if (post.shared_post_id) {
-        const sharedMedia = mediaMap.get(post.shared_post_id._id.toString()) || [];
+        const sharedAuthor = post.shared_post_id.user_id;
+
+        // Nếu user đã bị xoá (is_deleted = true)
+        const isUserDeleted = sharedAuthor?.is_deleted;
         sharedPost = {
           ...post.shared_post_id.toObject(),
-          media: sharedMedia,
+          content: isUserDeleted ? "Post is deleted" : post.shared_post_id.content,
+          author: isUserDeleted ? { username: "User has been deleted", avatar_url: null } : sharedAuthor,
+          media: isUserDeleted ? [] : mediaMap.get(post.shared_post_id._id.toString()) || [],
         };
       }
 
@@ -706,6 +711,7 @@ const getRecommendPost = async (req, res) => {
         ...post,
         media,
         shared_post_id: sharedPost,
+        randomKey: Math.random(),
       };
     });
 
@@ -739,17 +745,28 @@ const getRecommendPost = async (req, res) => {
         // Scoring metadata
         score: scoreResult.score,
         isAd: scoreResult.isAd,
+        randomKey: post.randomKey,
       };
     });
 
     // Sort by final score
-    scoredPosts.sort((a, b) => b.score - a.score);
+    const finalPosts = [];
+    let lastWasAd = false;
+    scoredPosts
+      .sort((a, b) => b.score - a.score || a.randomKey - b.randomKey)
+      .forEach((post) => {
+        if (post.isAd && lastWasAd) {
+          finalPosts.push(null);
+        }
+        finalPosts.push(post);
+        lastWasAd = post.isAd;
+      });
 
     // Pagination
-    const paginatedPosts = scoredPosts.slice(skip, skip + limit);
+    const paginatedPosts = finalPosts.slice(skip, skip + limit);
 
     // Get total count (approximate để tránh query chậm)
-    const totalPosts = scoredPosts.length;
+    const totalPosts = finalPosts.length;
 
     // Response
     const responseTime = Date.now() - startTime;
