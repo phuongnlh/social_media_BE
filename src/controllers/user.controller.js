@@ -232,7 +232,7 @@ const logoutUser = async (req, res) => {
     // ✅ Xóa cookie refresh token
     res.clearCookie("refreshToken", {
       httpOnly: true,
-      secure: true,
+      secure: false,
       sameSite: "Lax",
     });
 
