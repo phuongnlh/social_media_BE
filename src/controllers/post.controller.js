@@ -1021,10 +1021,10 @@ const getAllPostsbyUserId = async (req, res) => {
   }
 };
 // Cache Fuse instance
-const postFuseCache = new Map<string, Fuse<any>>();
+const postFuseCache = new Map();
 
 // Hàm chuẩn hóa tiếng Việt
-function removeAccents(str: string): string {
+function removeAccents(str) {
   if (!str) return '';
   return str
     .normalize('NFD')
@@ -1035,14 +1035,14 @@ function removeAccents(str: string): string {
 }
 
 // Tạo cache key
-function getCacheKey(userId: string, friendIds: string[]) {
+function getCacheKey(userId, friendIds) {
   return `${userId}_${friendIds.sort().join(',')}`;
 };
 const searchPost = async (req, res) => {
   const { query, page = 1, limit = 10 } = req.query;
   const userId = req.user._id.toString();
-  const pageNum = parseInt(page as string, 10);
-  const limitNum = parseInt(limit as string, 10);
+  const pageNum = parseInt(page, 10);
+  const limitNum = parseInt(limit, 10);
 
   try {
     // 1. Lấy danh sách bạn bè
