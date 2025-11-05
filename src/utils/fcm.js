@@ -8,7 +8,7 @@ const admin = require( "../config/firebase");
  * @param {object} data - payload kèm theo (tùy chọn)
  * @returns {Promise<void>}
  */
-export const sendFcmNotification = async (tokens, title, body, data = {}) => {
+const sendFcmNotification = async (tokens, title, body, data = {}) => {
   if (!tokens || (Array.isArray(tokens) && tokens.length === 0)) {
     console.warn("⚠️ Không có token để gửi FCM");
     return;
@@ -47,3 +47,5 @@ export const sendFcmNotification = async (tokens, title, body, data = {}) => {
     console.error("❌ Lỗi gửi FCM:", error.message);
   }
 };
+
+module.exports = { sendFcmNotification };
