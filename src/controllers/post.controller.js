@@ -137,66 +137,61 @@ const getAllPostsbyUser = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
-// Lấy thông tin chi tiết của một bài đăng theo ID
 const getPostById = async (req, res) => {
   try {
     const postId = req.params.id;
-    const userId = req.user._id;
+    const userId = req.user._id.toString();
 
     // Tìm bài đăng theo ID
     const post = await Post.findById(postId)
-      .populate("user_id", "username avatar_url fullName")
+      .populate("user_id", "username avatar_url fullName is_deleted")
       .populate({
         path: "shared_post_id",
-        populate: { path: "user_id", select: "username avatar_url fullName" },
+        populate: { path: "user_id", select: "username avatar_url fullName is_deleted" },
       })
       .lean();
 
     if (!post) return res.status(404).json({ message: "Không tìm thấy bài đăng" });
 
-    // Kiểm tra nếu bài đăng đã bị xóa và người yêu cầu không phải tác giả
-    if (post.is_deleted && post.user_id._id.toString() !== userId.toString()) {
+    // Nếu post chính bị xoá và user không phải tác giả → trả 410
+    if (post.is_deleted && post.user_id?._id.toString() !== userId) {
       return res.status(410).json({ message: "Bài đăng đã bị xóa" });
     }
 
-    // Kiểm tra quyền truy cập nếu bài đăng ở chế độ riêng tư
-    if (post.type === "Private" && post.user_id._id.toString() !== userId.toString()) {
+    // Quyền truy cập cho post Private
+    if (post.type === "Private" && post.user_id?._id.toString() !== userId) {
       return res.status(403).json({ message: "Không có quyền truy cập" });
     }
 
-    // Lấy media cho post chính
-    const postMedia = await PostMedia.findOne({ post_id: post._id }).populate("media_id");
-    let media = [];
-    if (postMedia?.media_id?.length > 0) {
-      media = postMedia.media_id.map((m) => ({
-        url: m.url,
-        type: m.media_type,
-      }));
-    }
+    // Kiểm tra author của post chính
+    const isAuthorDeleted = post.user_id?.is_deleted;
+    const author = isAuthorDeleted ? { username: "Unknown", avatar_url: null, fullName: null } : post.user_id;
 
-    // Nếu có shared_post thì lấy media cho shared_post
+    // Media cho post chính
+    const postMedia = await PostMedia.findOne({ post_id: post._id }).populate("media_id").lean();
+    const media = postMedia?.media_id?.map((m) => ({ url: m.url, type: m.media_type })) || [];
+
+    // Shared post
     let sharedPost = null;
     if (post.shared_post_id) {
-      const sharedPostMedia = await PostMedia.findOne({
-        post_id: post.shared_post_id._id,
-      }).populate("media_id");
-
-      let sharedMedia = [];
-      if (sharedPostMedia?.media_id?.length > 0) {
-        sharedMedia = sharedPostMedia.media_id.map((m) => ({
-          url: m.url,
-          type: m.media_type,
-        }));
-      }
-
+      const sharedDeleted = post.shared_post_id.is_deleted;
+      const sharedAuthorDeleted = post.shared_post_id.user_id?.is_deleted;
       sharedPost = {
         ...post.shared_post_id,
-        media: sharedMedia,
+        content: sharedDeleted || sharedAuthorDeleted ? "Post is not available" : post.shared_post_id.content,
+        author: sharedAuthorDeleted
+          ? { username: "Unknown", avatar_url: null, fullName: null }
+          : post.shared_post_id.user_id,
+        media: [],
       };
+
+      if (!sharedDeleted && !sharedAuthorDeleted) {
+        const sharedMedia = await PostMedia.findOne({ post_id: post.shared_post_id._id }).populate("media_id").lean();
+        sharedPost.media = sharedMedia?.media_id?.map((m) => ({ url: m.url, type: m.media_type })) || [];
+      }
     }
 
-    // Tính reactionCount và commentCount
+    // Reaction và comment count
     const [reactions, comments] = await Promise.all([
       PostReaction.find({ post_id: post._id }).lean(),
       Comment.find({ post_id: post._id, is_deleted: false }).lean(),
@@ -205,11 +200,11 @@ const getPostById = async (req, res) => {
     const reactionCount = reactions.length;
     const commentCount = comments.length;
 
-    // Trả về object cuối cùng
+    // Trả về response
     const { user_id, shared_post_id, ...rest } = post;
     res.json({
       ...rest,
-      author: user_id,
+      author,
       shared_post_id: sharedPost,
       media,
       reactionCount,
@@ -805,7 +800,7 @@ const getRecommendPost = async (req, res) => {
         sharedPost = {
           ...post.shared_post_id.toObject(),
           content: isUserDeleted || sharedPostDeleted ? "Post is not available" : post.shared_post_id.content,
-          author: isUserDeleted || sharedPostDeleted ? { username: "Unknown", avatar_url: null } : sharedAuthor,
+          author: isUserDeleted ? { username: "Unknown", avatar_url: null } : sharedAuthor,
           media: isUserDeleted || sharedPostDeleted ? [] : mediaMap.get(post.shared_post_id._id.toString()) || [],
         };
       }
@@ -971,10 +966,7 @@ const getAllPostsbyUserId = async (req, res) => {
           sharedPost = {
             ...post.shared_post_id.toObject(),
             content: sharedDeleted || sharedAuthorDeleted ? "Post is not available" : post.shared_post_id.content,
-            author:
-              sharedDeleted || sharedAuthorDeleted
-                ? { username: "Unknown", avatar_url: null }
-                : post.shared_post_id.user_id,
+            author: sharedAuthorDeleted ? { username: "Unknown", avatar_url: null } : post.shared_post_id.user_id,
             media: [],
           };
           if (!sharedDeleted && !sharedAuthorDeleted) {
@@ -1109,8 +1101,7 @@ const searchPost = async (req, res) => {
             sharedPost = {
               ...shared,
               content: sharedAuthorDeleted || shared.is_deleted ? "Post is not available" : shared.content,
-              author:
-                sharedAuthorDeleted || shared.is_deleted ? { username: "Unknown", avatar_url: null } : sharedAuthorDoc,
+              author: sharedAuthorDeleted ? { username: "Unknown", avatar_url: null } : sharedAuthorDoc,
               media: [],
             };
             if (!sharedAuthorDeleted && !shared.is_deleted) {
