@@ -230,13 +230,9 @@ const logoutUser = async (req, res) => {
     }
 
     // ✅ Xóa cookie refresh token
-    res.clearCookie("refreshToken", {
-      httpOnly: true,
-      secure: false,
-      sameSite: "Lax",
-    });
+    res.clearCookie("refreshToken");
 
-    return res.json({ message: "Logout successful" });
+    return res.status(200).json({ message: "Logout successful" });
   } catch (err) {
     console.error("Logout error:", err);
     return res.status(500).json({ message: "Internal server error" });
