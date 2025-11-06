@@ -798,14 +798,15 @@ const getRecommendPost = async (req, res) => {
       let sharedPost = null;
       if (post.shared_post_id) {
         const sharedAuthor = post.shared_post_id.user_id;
+        const sharedPostDeleted = post.shared_post_id.is_deleted;
 
         // Nếu user đã bị xoá (is_deleted = true)
         const isUserDeleted = sharedAuthor?.is_deleted;
         sharedPost = {
           ...post.shared_post_id.toObject(),
-          content: isUserDeleted ? "Post is deleted" : post.shared_post_id.content,
-          author: isUserDeleted ? { username: "User has been deleted", avatar_url: null } : sharedAuthor,
-          media: isUserDeleted ? [] : mediaMap.get(post.shared_post_id._id.toString()) || [],
+          content: isUserDeleted || sharedPostDeleted ? "Post is not available" : post.shared_post_id.content,
+          author: isUserDeleted || sharedPostDeleted ? { username: "Unknown", avatar_url: null } : sharedAuthor,
+          media: isUserDeleted || sharedPostDeleted ? [] : mediaMap.get(post.shared_post_id._id.toString()) || [],
         };
       }
 
@@ -860,7 +861,7 @@ const getRecommendPost = async (req, res) => {
     const organicPosts = scoredPosts.filter((p) => !p.isAd);
 
     const finalPosts = createNaturalMixFeed(organicPosts, adPosts, {
-      maxAdDensity: 0.30, // 15% là ads (1 ad mỗi ~6-7 posts)
+      maxAdDensity: 0.3, // 15% là ads (1 ad mỗi ~6-7 posts)
       minPostsBeforeFirstAd: 3, // Ít nhất 3 bài trước ad đầu tiên
       minSpacingBetweenAds: 4, // Ít nhất 4 bài giữa 2 ads
       randomSpacingRange: 2, // Random ±2 bài để tự nhiên hơn
@@ -943,104 +944,86 @@ const clearRecommendCache = () => {
 const getAllPostsbyUserId = async (req, res) => {
   try {
     const userId = req.params.userId;
-    const { media_only } = req.query; // Tham số query để lọc posts có media
+    const { media_only } = req.query;
 
-    // Tìm tất cả bài đăng không bị xóa của người dùng, sắp xếp theo thời gian giảm dần
-    const posts = await Post.find({ user_id: userId, is_deleted: false })
-      .sort({ createdAt: -1 })
-      .populate("user_id", "username avatar_url fullName") // Nạp thông tin người dùng
-      .lean();
+    const posts = await Post.find({ user_id: userId, is_deleted: false }).sort({ createdAt: -1 }).lean();
 
-    // Nạp thông tin media cho mỗi bài đăng
     const populatedPosts = await Post.populate(posts, [
-      {
-        path: "user_id",
-        select: "username avatar_url fullName",
-      },
-      {
-        path: "shared_post_id",
-        populate: {
-          path: "user_id",
-          select: "username avatar_url fullName",
-        },
-      },
+      { path: "user_id", select: "username avatar_url fullName is_deleted" },
+      { path: "shared_post_id", populate: { path: "user_id", select: "username avatar_url fullName is_deleted" } },
     ]);
 
-    // 5. Populate media
     const postsWithMedia = await Promise.all(
       populatedPosts.map(async (post) => {
-        // Media cho post chính
-        const postMedia = await PostMedia.findOne({
-          post_id: post._id,
-        }).populate("media_id");
+        const authorDeleted = post.user_id?.is_deleted;
+        const author = authorDeleted ? { username: "Unknown", avatar_url: null, fullName: null } : post.user_id;
+
         let media = [];
+        const postMedia = await PostMedia.findOne({ post_id: post._id }).populate("media_id").lean();
         if (postMedia?.media_id?.length > 0) {
-          media = postMedia.media_id.map((m) => ({
-            url: m.url,
-            type: m.media_type,
-          }));
+          media = postMedia.media_id.map((m) => ({ url: m.url, type: m.media_type }));
         }
 
-        // Nếu có shared_post thì thêm media trực tiếp vào object đó
         let sharedPost = null;
         if (post.shared_post_id) {
-          const sharedPostMedia = await PostMedia.findOne({
-            post_id: post.shared_post_id._id,
-          }).populate("media_id");
-
-          let sharedMedia = [];
-          if (sharedPostMedia?.media_id?.length > 0) {
-            sharedMedia = sharedPostMedia.media_id.map((m) => ({
-              url: m.url,
-              type: m.media_type,
-            }));
-          }
-
-          // clone object mongoose sang plain object + gắn media vào trong
+          const sharedDeleted = post.shared_post_id.is_deleted;
+          const sharedAuthorDeleted = post.shared_post_id.user_id?.is_deleted;
           sharedPost = {
             ...post.shared_post_id.toObject(),
-            media: sharedMedia,
+            content: sharedDeleted || sharedAuthorDeleted ? "Post is not available" : post.shared_post_id.content,
+            author:
+              sharedDeleted || sharedAuthorDeleted
+                ? { username: "Unknown", avatar_url: null }
+                : post.shared_post_id.user_id,
+            media: [],
           };
+          if (!sharedDeleted && !sharedAuthorDeleted) {
+            const sharedMedia = await PostMedia.findOne({ post_id: post.shared_post_id._id })
+              .populate("media_id")
+              .lean();
+            sharedPost.media = sharedMedia?.media_id?.map((m) => ({ url: m.url, type: m.media_type })) || [];
+          }
         }
 
         return {
           ...post,
-          author: post.user_id,
-          media, // media của post chính
-          shared_post_id: sharedPost, // shared_post có media nằm trong luôn
+          author,
+          media,
+          shared_post_id: sharedPost,
         };
       })
     );
 
-    // Lọc posts có media nếu media_only được truyền vào
-    let filteredPosts = postsWithMedia;
-    if (media_only && (media_only === "true" || media_only === "1")) {
-      filteredPosts = postsWithMedia.filter((post) => post.media && post.media.length > 0);
-    }
+    const filteredPosts =
+      media_only && (media_only === "true" || media_only === "1")
+        ? postsWithMedia.filter((post) => post.media.length > 0)
+        : postsWithMedia;
 
     res.json(filteredPosts);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
 // Cache Fuse instance
 const postFuseCache = new Map();
 
 // Hàm chuẩn hóa tiếng Việt
 function removeAccents(str) {
-  if (!str) return '';
+  if (!str) return "";
   return str
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/đ/g, 'd')
-    .replace(/Đ/g, 'D')
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
     .toLowerCase();
 }
 
 // Tạo cache key
 function getCacheKey(userId, friendIds) {
-  return `${userId}_${friendIds.sort().join(',')}`;
-};
+  return `${userId}_${friendIds.sort().join(",")}`;
+}
+
 const searchPost = async (req, res) => {
   const { query, page = 1, limit = 10 } = req.query;
   const userId = req.user._id.toString();
@@ -1058,107 +1041,88 @@ const searchPost = async (req, res) => {
       f.user_id_1.toString() === userId ? f.user_id_2.toString() : f.user_id_1.toString()
     );
 
-    // 2. Lấy tất cả bài post (chỉ cần field cần thiết)
+    // 2. Lấy tất cả bài post cần tìm kiếm
     const posts = await Post.find({
       is_deleted: false,
-      $or: [
-        { type: "Public" },
-        { type: "Friends", user_id: { $in: [...friendIds, userId] } },
-      ],
+      $or: [{ type: "Public" }, { type: "Friends", user_id: { $in: [...friendIds, userId] } }],
     })
       .lean()
-      .select('_id content user_id type createdAt')
+      .select("_id content user_id type createdAt shared_post_id")
       .sort({ createdAt: -1 });
 
     if (posts.length === 0) {
       return res.json({ data: [], total: 0, page: pageNum, limit: limitNum });
     }
 
-    // 3. Tạo Fuse instance (cache theo user + bạn bè)
+    // 3. Fuse.js
     const cacheKey = getCacheKey(userId, friendIds);
     let fuse = postFuseCache.get(cacheKey);
-
     if (!fuse) {
       fuse = new Fuse(posts, {
-        keys: ['content'],
+        keys: ["content"],
         threshold: 0.4,
         includeScore: true,
         shouldSort: true,
         minMatchCharLength: 1,
         ignoreLocation: true,
-        getFn: (obj, path) => removeAccents(obj[path] || ''),
+        getFn: (obj, path) => removeAccents(obj[path] || ""),
       });
       postFuseCache.set(cacheKey, fuse);
-
-      // Dọn cache cũ
-      if (postFuseCache.size > 50) {
-        const firstKey = postFuseCache.keys().next().value;
-        postFuseCache.delete(firstKey);
-      }
+      if (postFuseCache.size > 50) postFuseCache.delete(postFuseCache.keys().next().value);
     }
 
-    // 4. Tìm kiếm với Fuse.js
     let results = posts;
     if (query && query.trim()) {
-      const fuseResults = fuse.search(query.trim());
-      results = fuseResults.map(r => r.item);
+      results = fuse.search(query.trim()).map((r) => r.item);
     }
 
-    // 5. Phân trang
+    // 4. Phân trang
     const total = results.length;
     const start = (pageNum - 1) * limitNum;
-    const end = start + limitNum;
-    const paginated = results.slice(start, end);
+    const paginated = results.slice(start, start + limitNum);
 
-    // 6. Gắn media + author + reactions + comments + shares (song song)
+    // 5. Gắn author, media, reactions, comments, shared post
     const postsWithDetails = await Promise.all(
       paginated.map(async (post) => {
-        const [author, reactions, comments, shares, postMedia] = await Promise.all([
-          User.findById(post.user_id).lean().select('username avatar_url fullName'),
+        const [authorDoc, reactions, comments, shares, postMedia] = await Promise.all([
+          User.findById(post.user_id).lean().select("username avatar_url fullName is_deleted"),
           PostReaction.countDocuments({ post_id: post._id }),
-          commentModel.countDocuments({ post_id: post._id, is_deleted: false }),
+          Comment.countDocuments({ post_id: post._id, is_deleted: false }),
           Post.countDocuments({ shared_post_id: post._id, is_deleted: false }),
-          postMediaModel.findOne({ post_id: post._id }).populate('media_id').lean(),
+          PostMedia.findOne({ post_id: post._id }).populate("media_id").lean(),
         ]);
 
-        let media = [];
-        if (postMedia?.media_id?.length > 0) {
-          media = postMedia.media_id.map(m => ({
-            url: m.url,
-            type: m.media_type,
-          }));
-        }
+        const isAuthorDeleted = authorDoc?.is_deleted;
+        const author = isAuthorDeleted ? { username: "Unknown", avatar_url: null, fullName: null } : authorDoc;
 
+        const media = postMedia?.media_id?.map((m) => ({ url: m.url, type: m.media_type })) || [];
+
+        // Shared post
         let sharedPost = null;
         if (post.shared_post_id) {
-          const shared = await Post.findById(post.shared_post_id)
-            .lean()
-            .select('_id content user_id')
-            .populate({
-              path: 'user_id',
-              select: 'username avatar_url fullName',
-            });
-
+          const shared = await Post.findById(post.shared_post_id).lean();
           if (shared) {
-            const sharedMedia = await PostMedia.findOne({ post_id: shared._id })
-              .populate('media_id')
-              .lean();
-            const sharedMediaList = sharedMedia?.media_id?.map(m => ({
-              url: m.url,
-              type: m.media_type,
-            })) || [];
-
+            const sharedAuthorDoc = await User.findById(shared.user_id)
+              .lean()
+              .select("username avatar_url fullName is_deleted");
+            const sharedAuthorDeleted = sharedAuthorDoc?.is_deleted;
             sharedPost = {
               ...shared,
-              author: shared.user_id,
-              media: sharedMediaList,
+              content: sharedAuthorDeleted || shared.is_deleted ? "Post is not available" : shared.content,
+              author:
+                sharedAuthorDeleted || shared.is_deleted ? { username: "Unknown", avatar_url: null } : sharedAuthorDoc,
+              media: [],
             };
+            if (!sharedAuthorDeleted && !shared.is_deleted) {
+              const sharedMedia = await PostMedia.findOne({ post_id: shared._id }).populate("media_id").lean();
+              sharedPost.media = sharedMedia?.media_id?.map((m) => ({ url: m.url, type: m.media_type })) || [];
+            }
           }
         }
 
         return {
           ...post,
-          author: author || null,
+          author,
           media,
           shared_post_id: sharedPost,
           reactionCount: reactions,
@@ -1168,17 +1132,16 @@ const searchPost = async (req, res) => {
       })
     );
 
-    // 7. Trả về
     res.json({
       data: postsWithDetails,
       total,
       page: pageNum,
       limit: limitNum,
-      hasMore: end < total,
+      hasMore: start + limitNum < total,
     });
   } catch (err) {
-    console.error('Search post error:', err);
-    res.status(500).json({ error: 'Lỗi tìm kiếm bài viết' });
+    console.error("Search post error:", err);
+    res.status(500).json({ error: "Lỗi tìm kiếm bài viết" });
   }
 };
 
