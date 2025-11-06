@@ -81,7 +81,7 @@ const refreshAccessAdminToken = async (req, res) => {
     const payload = jwt.verify(refreshToken, publicKey, {
       algorithms: ["RS256"],
     });
-    // const key = `refresh:${payload.id}:${refreshToken}`;
+    const key = `refresh:${payload.id}:${refreshToken}`;
     // const exists = await redisClient.exists(key);
     // if (!exists) {
     //   const pattern = `refresh:${payload.id}:*`;
