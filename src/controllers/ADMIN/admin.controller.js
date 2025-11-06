@@ -361,14 +361,14 @@ const updateUserStatus = async (req, res) => {
       await UserReport.updateMany(
         {
           reportedUser: userId,
-          status: { $in: ["pending", "investigating"] }
+          status: { $in: ["pending", "investigating"] },
         },
         {
           $set: {
             status: "resolved",
             actionTaken: "user_banned",
-            resolvedAt: new Date()
-          }
+            resolvedAt: new Date(),
+          },
         }
       );
     }
@@ -393,6 +393,19 @@ const updateUserStatus = async (req, res) => {
       message: "Internal server error while updating user status",
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
+  }
+};
+
+const updateUserData = async (req, res) => {
+  const { userId } = req.params;
+  const { data } = req.body;
+
+  try {
+    const user = await User.findByIdAndUpdate(userId, data, { new: true, select: "-hash -salt -twoFASecret" });
+    res.status(200).json({ success: true, message: "User data updated successfully", data: user });
+  } catch (error) {
+    console.error("Error updating user data:", error);
+    res.status(500).json({ message: "Internal server error while updating user data" });
   }
 };
 
@@ -696,4 +709,5 @@ module.exports = {
   getPlatformStatistics,
   getTopPosters,
   deleteUserById,
+  updateUserData,
 };

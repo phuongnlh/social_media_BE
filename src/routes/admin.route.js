@@ -6,6 +6,7 @@ const {
   updateUserStatus,
   getPlatformStatistics,
   getTopPosters,
+  updateUserData,
 } = require("../controllers/ADMIN/admin.controller");
 const {
   getAnalytics,
@@ -38,6 +39,7 @@ router.get("/users", isAdmin, getAllUsers);
 router.get("/users/:userId", getUserById);
 router.delete("/users/:userId", deleteUserById);
 router.patch("/users/:userId/status", updateUserStatus);
+router.put("/users/:userId", updateUserData);
 
 // Platform statistics
 router.get("/statistics", getPlatformStatistics);
