@@ -20,7 +20,6 @@ const sendFcmNotification = async (tokens, title, body, data = {}) => {
       return acc;
     }, {});
     const payload = {
-      notification: { title, body },
       data: {
         ...stringData,
         click_action: "FLUTTER_NOTIFICATION_CLICK",

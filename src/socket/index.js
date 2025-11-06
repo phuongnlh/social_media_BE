@@ -79,6 +79,7 @@ module.exports = (io) => {
           ...newMessage.toObject(),
           channelType: channel.type,
           channelName: channel.name,
+          channelAvatar: channel.avatar,
         };
 
         // Gửi tin nhắn đến tất cả thành viên
@@ -97,11 +98,16 @@ module.exports = (io) => {
             // Gửi thông báo FCM
             await sendFcmNotification(
               tokens,
-              "💬 New message",
-              `${messageWithChannel.from.fullName} has sent a message`,
+              messageWithChannel.from.fullName,
+              `${messageWithChannel.content}` || "You have a new message",
               {
                 type: "new_message",
                 channelId: messageWithChannel.channelId,
+                fromId: messageWithChannel.from._id.toString(),
+                avatarUrl:
+                  messageWithChannel.channelType === "group"
+                    ? messageWithChannel.channelAvatar
+                    : messageWithChannel.from.avatar_url,
               }
             );
           }
