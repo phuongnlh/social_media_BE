@@ -466,7 +466,7 @@ const uploadBackgroundProfile = async (req, res) => {
 const UpdateDataProfile = async (req, res) => {
   const userId = req.user._id;
   const { username, fullName, email, bio, phone, location, gender } = req.body;
-  if (!/^\d{10,12}$/.test(phone)) {
+  if (!!phone && !/^\d{10,12}$/.test(phone)) {
     return res.status(400).json({ message: "Invalid phone number" });
   }
   try {

@@ -34,18 +34,12 @@ const createGroupPost = async (req, res) => {
       user: user_id,
       status: "approved",
     });
-    if (!member)
-      return res
-        .status(403)
-        .json({ error: "Bạn không phải thành viên nhóm này." });
+    if (!member) return res.status(403).json({ error: "You are not a member of this group." });
 
     // Kiểm tra hạn chế đăng bài
-    if (
-      member.restrict_post_until &&
-      new Date(member.restrict_post_until) > new Date()
-    ) {
+    if (member.restrict_post_until && new Date(member.restrict_post_until) > new Date()) {
       return res.status(403).json({
-        error: "Bạn đang bị hạn chế đăng bài đến " + member.restrict_post_until,
+        error: "You are restricted from posting until " + member.restrict_post_until,
         restrict_reason: member.restrict_reason,
       });
     }
@@ -94,32 +88,12 @@ const createGroupPost = async (req, res) => {
     }
 
     if (status === "pending") {
-      if (mediaIds.length === 1) {
-        await moderationService.checkSinglePostImage(
-          groupPost._id,
-          mediaIds[0].url,
-          mediaIds[0].media_type
-        );
-      } else {
-        await moderationService.checkPostWithMultipleImages(
-          groupPost._id,
-          mediaIds.map((m) => ({
-            url: m.url,
-            mediaType: m.media_type,
-          }))
-        );
-        console.log(
-          `Multiple images moderation queued for post ${groupPost._id}`
-        );
-      }
       return res.status(201).json({
-        message: "Bài viết của bạn đang chờ duyệt",
+        message: "Group post created and pending approval",
         postId: groupPost._id,
       });
     }
-    res
-      .status(201)
-      .json({ message: "Group post created", postId: groupPost._id });
+    res.status(201).json({ message: "Group post created", postId: groupPost._id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -169,29 +143,18 @@ const getGroupPostById = async (req, res) => {
     const { post_id } = req.params;
     const user_id = req.user._id;
 
-    const post = await GroupPost.findById(post_id)
-      .populate("user_id", "username")
-      .lean();
-    if (!post || post.is_deleted)
-      return res.status(404).json({ message: "Post not found" });
+    const post = await GroupPost.findById(post_id).populate("user_id", "username").lean();
+    if (!post || post.is_deleted) return res.status(404).json({ message: "Post not found" });
 
     // Kiểm tra quyền admin
     const isAdmin = await isGroupAdmin(post.group_id, user_id);
 
     // Nếu không phải admin và không phải chủ bài viết, chỉ xem được bài đã duyệt
-    if (
-      !isAdmin &&
-      String(post.user_id._id) !== String(user_id) &&
-      post.status !== "approved"
-    ) {
-      return res
-        .status(403)
-        .json({ message: "You are not allowed to view this post" });
+    if (!isAdmin && String(post.user_id._id) !== String(user_id) && post.status !== "approved") {
+      return res.status(403).json({ message: "You are not allowed to view this post" });
     }
 
-    const postMedia = await PostMedia.findOne({ postgr_id: post._id }).populate(
-      "media_id"
-    );
+    const postMedia = await PostMedia.findOne({ postgr_id: post._id }).populate("media_id");
     let media = [];
     if (postMedia && postMedia.media_id && postMedia.media_id.length > 0) {
       media = postMedia.media_id.map((m) => ({
@@ -214,10 +177,7 @@ const updateGroupPost = async (req, res) => {
     const user_id = req.user._id;
 
     const post = await GroupPost.findOne({ _id: post_id, user_id });
-    if (!post)
-      return res
-        .status(404)
-        .json({ message: "Post not found or unauthorized" });
+    if (!post) return res.status(404).json({ message: "Post not found or unauthorized" });
 
     post.content = content || post.content;
     post.updated_at = new Date();
@@ -240,10 +200,7 @@ const softDeleteGroupPost = async (req, res) => {
       user_id,
       is_deleted: false,
     });
-    if (!post)
-      return res
-        .status(404)
-        .json({ message: "Post not found or already deleted" });
+    if (!post) return res.status(404).json({ message: "Post not found or already deleted" });
 
     post.is_deleted = true;
     post.deleted_at = new Date();
@@ -266,10 +223,7 @@ const restoreGroupPost = async (req, res) => {
       user_id,
       is_deleted: true,
     });
-    if (!post)
-      return res
-        .status(404)
-        .json({ message: "Post not found or not in trash" });
+    if (!post) return res.status(404).json({ message: "Post not found or not in trash" });
 
     post.is_deleted = false;
     post.deleted_at = null;
@@ -290,9 +244,7 @@ const shareGroupPostToWall = async (req, res) => {
     // Lấy group post và group
     const groupPost = await GroupPost.findById(group_post_id);
     if (!groupPost || groupPost.is_deleted) {
-      return res
-        .status(404)
-        .json({ message: "Group post not found or deleted" });
+      return res.status(404).json({ message: "Group post not found or deleted" });
     }
 
     const group = await Group.findById(groupPost.group_id);
@@ -327,16 +279,12 @@ const shareGroupPostToWall = async (req, res) => {
       } catch (error) {
         console.error("Không thể gửi thông báo share group post:", error);
       }
-      return res
-        .status(201)
-        .json({ message: "Shared group post to wall", postId: sharedPost._id });
+      return res.status(201).json({ message: "Shared group post to wall", postId: sharedPost._id });
     }
 
     // 2. Nếu group private => không cho share
     if (group.privacy === "Private") {
-      return res
-        .status(403)
-        .json({ message: "Cannot share post from a private group" });
+      return res.status(403).json({ message: "Cannot share post from a private group" });
     }
     return res.status(400).json({ message: "Unsupported group privacy type" });
   } catch (err) {
@@ -349,8 +297,7 @@ const getGroupFeed = async (req, res) => {
   try {
     const user_id = req.user._id;
     const page = parseInt(req.query.page) > 0 ? parseInt(req.query.page) : 1;
-    const limit =
-      parseInt(req.query.limit) > 0 ? parseInt(req.query.limit) : 10;
+    const limit = parseInt(req.query.limit) > 0 ? parseInt(req.query.limit) : 10;
     const skip = (page - 1) * limit;
 
     // Lấy danh sách group user đã tham gia
@@ -430,9 +377,7 @@ const approveGroupPost = async (req, res) => {
     // Kiểm tra quyền admin
     const isAdmin = await isGroupAdmin(post.group_id, admin_id);
     if (!isAdmin) {
-      return res
-        .status(403)
-        .json({ message: "Only admin can approve/reject posts" });
+      return res.status(403).json({ message: "Only admin can approve/reject posts" });
     }
 
     if (post.status !== "pending") {
@@ -448,20 +393,20 @@ const approveGroupPost = async (req, res) => {
       post.approved_by = admin_id;
       post.approved_at = new Date();
       notiType = "group_post_approved";
-      notiContent = `Bài viết của bạn trong nhóm "${groupName}" đã được duyệt.`;
+      notiContent = `Your post from group "${groupName}" has been approved.`;
     } else if (action === "reject") {
       post.status = "rejected";
       post.approved_by = admin_id;
       post.approved_at = new Date();
       notiType = "group_post_rejected";
-      notiContent = `Bài viết của bạn trong nhóm "${groupName}" đã bị từ chối.`;
+      notiContent = `Your post from group "${groupName}" has been rejected.`;
 
       if (violation === "true") {
         await GroupMember.findOneAndUpdate(
           { group: post.group_id, user: post.user_id },
           { $inc: { count_violations: 1 } }
         );
-        notiContent += " Bài viết bị đánh dấu vi phạm.";
+        notiContent += " The post has been marked as a violation.";
       }
     } else {
       return res.status(400).json({ message: "Invalid action" });
@@ -474,18 +419,9 @@ const approveGroupPost = async (req, res) => {
       const io = getSocketIO();
       const userSocketMap = getUserSocketMap();
       const group = await Group.findById(post.group_id);
-      await notificationService.createNotification(
-        io,
-        post.user_id,
-        notiType,
-        `${notiContent}`,
-        userSocketMap
-      );
+      await notificationService.createNotification(io, post.user_id, notiType, `${notiContent}`, userSocketMap);
     } catch (notifyErr) {
-      console.error(
-        "Không thể gửi thông báo duyệt/từ chối bài viết:",
-        notifyErr
-      );
+      console.error("Failed to send post approval/rejection notification:", notifyErr);
     }
     res.json({ message: `Post ${action}d successfully` });
   } catch (err) {
@@ -502,9 +438,7 @@ const getPendingPostsInGroup = async (req, res) => {
     // Kiểm tra quyền admin
     const isAdmin = await isGroupAdmin(group_id, user_id);
     if (!isAdmin) {
-      return res
-        .status(403)
-        .json({ message: "Only admin can view pending posts" });
+      return res.status(403).json({ message: "Only admin can view pending posts" });
     }
 
     const posts = await GroupPost.find({
@@ -561,16 +495,12 @@ const reportGroupPost = async (req, res) => {
       status: "approved",
     });
     if (!member) {
-      return res
-        .status(403)
-        .json({ error: "Bạn không phải thành viên nhóm này." });
+      return res.status(403).json({ error: "You are not a member of this group." });
     }
 
     // Không cho phép report bài viết của chính mình
     if (post.user_id.toString() === user_id.toString()) {
-      return res
-        .status(400)
-        .json({ message: "Không thể report bài viết của chính mình" });
+      return res.status(400).json({ message: "Cannot report your own post" });
     }
 
     // Kiểm tra đã report chưa (unique index sẽ tự động prevent duplicate)
@@ -579,9 +509,7 @@ const reportGroupPost = async (req, res) => {
       reporter_id: user_id,
     });
     if (existingReport) {
-      return res
-        .status(400)
-        .json({ message: "Bạn đã báo cáo bài viết này rồi" });
+      return res.status(400).json({ message: "You have already reported this post" });
     }
 
     // Tạo report mới
@@ -598,9 +526,7 @@ const reportGroupPost = async (req, res) => {
   } catch (err) {
     console.error("Report error:", err);
     if (err.code === 11000) {
-      return res
-        .status(400)
-        .json({ message: "Bạn đã báo cáo bài viết này rồi" });
+      return res.status(400).json({ message: "You have already reported this post" });
     }
     res.status(500).json({ error: err.message });
   }
@@ -618,9 +544,7 @@ const getReportedPostsInGroup = async (req, res) => {
     // Kiểm tra quyền admin
     const isAdmin = await isGroupAdmin(group_id, user_id);
     if (!isAdmin) {
-      return res
-        .status(403)
-        .json({ message: "Only admin can view reported posts" });
+      return res.status(403).json({ message: "Only admin can view reported posts" });
     }
 
     // Aggregate để lấy các post có report
@@ -640,9 +564,7 @@ const getReportedPostsInGroup = async (req, res) => {
 
     const posts = await Promise.all(
       reportedPosts.map(async (item) => {
-        const post = await GroupPost.findById(item._id)
-          .populate("user_id", "username fullName avatar_url")
-          .lean();
+        const post = await GroupPost.findById(item._id).populate("user_id", "username fullName avatar_url").lean();
 
         if (!post || post.is_deleted) return null;
 
@@ -784,20 +706,13 @@ const reactToGroupPost = async (req, res) => {
       const groupPost = await GroupPost.findById(postgr_id);
       if (groupPost && groupPost.user_id.toString() !== user_id.toString()) {
         // Lấy danh sách user đã react (trừ chủ post)
-        const reactions = await PostReaction.find({ postgr_id }).populate(
-          "user_id",
-          "username fullName"
-        );
+        const reactions = await PostReaction.find({ postgr_id }).populate("user_id", "username fullName");
         // Lọc ra user react khác chủ post
         const otherReactUsers = reactions.filter(
-          (r) =>
-            r.user_id &&
-            r.user_id._id.toString() !== groupPost.user_id.toString()
+          (r) => r.user_id && r.user_id._id.toString() !== groupPost.user_id.toString()
         );
         if (otherReactUsers.length > 0) {
-          const currentUser = otherReactUsers.find(
-            (r) => r.user_id._id.toString() === user_id.toString()
-          );
+          const currentUser = otherReactUsers.find((r) => r.user_id._id.toString() === user_id.toString());
           const otherCount = otherReactUsers.length - 1;
           let contentNoti = "";
           if (otherCount > 0) {
@@ -808,7 +723,7 @@ const reactToGroupPost = async (req, res) => {
           const io = getSocketIO();
           const notificationsNamespace = io.of("/notifications");
           const notificationUserSocketMap = getNotificationUserSocketMap();
-          
+
           await notificationService.createNotificationWithNamespace(
             notificationsNamespace,
             groupPost.user_id,
@@ -850,10 +765,7 @@ const removeGroupPostReaction = async (req, res) => {
 const getReactionsOfGroupPost = async (req, res) => {
   try {
     const { postgr_id } = req.params;
-    const reactions = await PostReaction.find({ postgr_id }).populate(
-      "user_id",
-      "username fullName"
-    );
+    const reactions = await PostReaction.find({ postgr_id }).populate("user_id", "username fullName");
 
     // Đếm số lượng từng loại reaction
     const counts = await PostReaction.aggregate([
@@ -874,9 +786,7 @@ const getUserReactionsForGroupPosts = async (req, res) => {
     const user_id = req.user._id;
 
     if (!Array.isArray(postgr_ids) || postgr_ids.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "postgr_ids must be a non-empty array" });
+      return res.status(400).json({ error: "postgr_ids must be a non-empty array" });
     }
 
     const reactions = await PostReaction.find({
