@@ -19,30 +19,30 @@ const refreshAccessToken = async (req, res) => {
     const key = `refresh:${userId}:${refreshToken}`;
 
     // ✅ Kiểm tra token có tồn tại trong Redis không
-    const exists = await redisClient.exists(key);
+    // const exists = await redisClient.exists(key);
 
-    if (!exists) {
-      // Kiểm tra xem user có token mới gần đây không (để phân biệt replay thật)
-      const recentTokens = await redisClient.sMembers(`user-sessions:${userId}`);
+    // if (!exists) {
+    //   // Kiểm tra xem user có token mới gần đây không (để phân biệt replay thật)
+    //   const recentTokens = await redisClient.sMembers(`user-sessions:${userId}`);
 
-      if (recentTokens.length > 0) {
-        // ⚠️ Có token mới => Có thể là refresh song song → không xoá session
-        return res.status(403).json({ message: "Refresh token expired" });
-      }
+    //   if (recentTokens.length > 0) {
+    //     // ⚠️ Có token mới => Có thể là refresh song song → không xoá session
+    //     return res.status(403).json({ message: "Refresh token expired" });
+    //   }
 
-      // 🚨 Replay attack thật → xoá toàn bộ session
-      const userTokensKey = `user-sessions:${userId}`;
-      const oldTokens = await redisClient.sMembers(userTokensKey);
-      if (oldTokens.length > 0) {
-        const delKeys = oldTokens.map((t) => `refresh:${userId}:${t}`);
-        await redisClient.del(userTokensKey, ...delKeys);
-      }
-      await FCMToken.deleteMany({ user_id: userId });
+    //   // 🚨 Replay attack thật → xoá toàn bộ session
+    //   const userTokensKey = `user-sessions:${userId}`;
+    //   const oldTokens = await redisClient.sMembers(userTokensKey);
+    //   if (oldTokens.length > 0) {
+    //     const delKeys = oldTokens.map((t) => `refresh:${userId}:${t}`);
+    //     await redisClient.del(userTokensKey, ...delKeys);
+    //   }
+    //   await FCMToken.deleteMany({ user_id: userId });
 
-      return res.status(403).json({
-        message: "Possible replay attack. All sessions terminated.",
-      });
-    }
+    //   return res.status(403).json({
+    //     message: "Possible replay attack. All sessions terminated.",
+    //   });
+    // }
 
     // ✅ Tạo token mới
     const newAccessToken = signToken({ id: userId }, "15m");

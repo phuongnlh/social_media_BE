@@ -151,16 +151,16 @@ const getPostById = async (req, res) => {
       })
       .lean();
 
-    if (!post) return res.status(404).json({ message: "Không tìm thấy bài đăng" });
+    if (!post) return res.status(404).json({ message: "Post not found" });
 
     // Nếu post chính bị xoá và user không phải tác giả → trả 410
     if (post.is_deleted && post.user_id?._id.toString() !== userId) {
-      return res.status(410).json({ message: "Bài đăng đã bị xóa" });
+      return res.status(410).json({ message: "Post has been deleted" });
     }
 
     // Quyền truy cập cho post Private
     if (post.type === "Private" && post.user_id?._id.toString() !== userId) {
-      return res.status(403).json({ message: "Không có quyền truy cập" });
+      return res.status(403).json({ message: "Access denied" });
     }
 
     // Kiểm tra author của post chính
@@ -227,7 +227,7 @@ const updatePost = async (req, res) => {
     const post = await Post.findOne({ _id: postId, user_id: userId });
     if (!post)
       return res.status(404).json({
-        message: "Không tìm thấy bài đăng hoặc không có quyền chỉnh sửa",
+        message: "Post not found or you do not have permission to edit this post",
       });
 
     // Cập nhật nội dung và thời gian cập nhật
@@ -236,7 +236,7 @@ const updatePost = async (req, res) => {
 
     await post.save();
 
-    res.json({ message: "Bài đăng đã được cập nhật thành công" });
+    res.json({ message: "Post updated successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -254,7 +254,7 @@ const softDeletePost = async (req, res) => {
       user_id: userId,
       is_deleted: false,
     });
-    if (!post) return res.status(404).json({ message: "Không tìm thấy bài đăng hoặc đã bị xóa" });
+    if (!post) return res.status(404).json({ message: "Post not found or has been deleted" });
 
     // Kiểm tra xem bài đăng có quảng cáo đang hoạt động không
     const activeAds = await adsModel.find({
@@ -264,7 +264,7 @@ const softDeletePost = async (req, res) => {
     if (activeAds.length > 0) {
       return res.status(400).json({
         message:
-          "Không thể xóa bài đăng này vì đang có quảng cáo hoạt động. Vui lòng dừng hoặc hủy quảng cáo trước khi xóa bài đăng.",
+          "Cannot delete this post because there are active ads. Please stop or cancel the ads before deleting the post.",
         hasActiveAds: true,
       });
     }
@@ -275,7 +275,7 @@ const softDeletePost = async (req, res) => {
     await post.save();
 
     res.status(200).json({
-      message: "Bài đăng đã được chuyển vào thùng rác. Sẽ bị xóa vĩnh viễn sau 7 ngày.",
+      message: "Post has been moved to trash. It will be permanently deleted after 7 days.",
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -296,7 +296,7 @@ const restorePost = async (req, res) => {
     });
     if (!post)
       return res.status(404).json({
-        message: "Không tìm thấy bài đăng hoặc không nằm trong thùng rác",
+        message: "Post not found or not in trash",
       });
 
     // Kiểm tra xem bài đăng có quá hạn khôi phục không (7 ngày)
@@ -304,7 +304,7 @@ const restorePost = async (req, res) => {
     const expiredDate = new Date(post.deleted_at.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     if (now > expiredDate) {
-      return res.status(410).json({ message: "Không thể khôi phục. Đã quá thời hạn." });
+      return res.status(410).json({ message: "Cannot restore post. It has expired." });
     }
 
     // Đánh dấu bài đăng chưa bị xóa và xóa thời gian xóa
@@ -312,7 +312,7 @@ const restorePost = async (req, res) => {
     post.deleted_at = null;
     await post.save();
 
-    res.json({ message: "Bài đăng đã được khôi phục thành công." });
+    res.json({ message: "Post restored successfully." });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

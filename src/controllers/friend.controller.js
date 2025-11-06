@@ -43,7 +43,7 @@ const sendFriendRequest = async (req, res) => {
         notificationsNamespace,
         user_id,
         "friend_request",
-        `${sender.fullName} đã gửi cho bạn một lời mời kết bạn`,
+        `${sender.fullName} has sent you a friend request.`,
         notificationUserSocketMap,
         { fromUser: sender._id, relatedId: friendship._id }
       );
@@ -52,7 +52,7 @@ const sendFriendRequest = async (req, res) => {
       // Tiếp tục thực thi ngay cả khi gửi thông báo thất bại
     }
 
-    res.status(201).json({ message: "Đã gửi lời mời kết bạn", friendship });
+    res.status(201).json({ message: "Successfully sent friend request", friendship });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -72,9 +72,9 @@ const cancelFriendRequest = async (req, res) => {
       ],
     });
 
-    if (!friendship) return res.status(404).json({ message: "Không tìm thấy mối quan hệ bạn bè" });
+    if (!friendship) return res.status(404).json({ message: "Can't find friendship" });
 
-    res.status(200).json({ message: "Đã hủy kết bạn", friendship });
+    res.status(200).json({ message: "Successfully canceled friend request", friendship });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -92,7 +92,7 @@ const respondFriendRequest = async (req, res) => {
       user_id_2: userId,
     });
     if (!friendship || friendship.user_id_2.toString() !== userId.toString())
-      return res.status(404).json({ message: "Không tìm thấy lời mời kết bạn" });
+      return res.status(404).json({ message: "Can't find friend request" });
     if (action === "accept") {
       // Chấp nhận lời mời kết bạn
       friendship.status = "accepted";
@@ -109,31 +109,31 @@ const respondFriendRequest = async (req, res) => {
           notificationsNamespace,
           friendship.user_id_1,
           "friend_accepted",
-          `${receiver.fullName} đã chấp nhận lời mời kết bạn của bạn`,
+          `${receiver.fullName} has accepted your friend request.`,
           notificationUserSocketMap,
           { fromUser: receiver._id, relatedId: friendship._id }
         );
       } catch (notifyErr) {
-        console.error("Không thể gửi thông báo chấp nhận kết bạn:", notifyErr);
+        console.error("Cannot send friend accepted notification:", notifyErr);
         // Tiếp tục thực thi ngay cả khi gửi thông báo thất bại
       }
     } else if (action == "decline") {
       // Từ chối lời mời kết bạn
       await Friendship.findOneAndDelete({ user_id_1: friendshipId });
       res.status(200).json({
-        message: "Đã từ chối lời mời kết bạn",
+        message: "Successfully declined friend request.",
       });
     } else if (action === "block") {
       // Chặn người gửi lời mời
       friendship.status = "blocked";
     } else {
-      return res.status(400).json({ message: "Hành động không hợp lệ" });
+      return res.status(400).json({ message: "Invalid action" });
     }
 
     // Lưu thay đổi trạng thái
     await friendship.save();
     res.json({
-      message: `Đã ${action === "accept" ? "chấp nhận" : action === "decline" ? "từ chối" : "chặn"} lời mời kết bạn`,
+      message: `Successfully ${action === "accept" ? "accepted" : action === "decline" ? "declined" : "blocked"} friend request`,
       friendship,
     });
   } catch (err) {
@@ -303,10 +303,10 @@ const withdrawFriendRequest = async (req, res) => {
     });
 
     if (!friendship) {
-      return res.status(404).json({ message: "Lời mời không tồn tại" });
+      return res.status(404).json({ message: "Can't find friend request" });
     }
 
-    res.status(200).json({ message: "Đã thu hồi lời mời kết bạn", friendship });
+    res.status(200).json({ message: "Successfully withdrew friend request", friendship });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

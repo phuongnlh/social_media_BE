@@ -377,7 +377,7 @@ const forgotPassword = async (req, res) => {
     // Gửi email khôi phục mật khẩu
     await sendResetPasswordEmail(user.email, resetLink);
 
-    res.json({ message: "Liên kết đặt lại mật khẩu đã được gửi đến email" });
+    res.json({ message: "Link reset password sent successfully to your email!" });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -394,7 +394,7 @@ const resetPassword = async (req, res) => {
     // Tìm người dùng từ ID trong token
     const user = await User.findById(decoded.id);
 
-    if (!user) return res.status(400).json({ message: "Không tìm thấy người dùng" });
+    if (!user) return res.status(400).json({ message: "User not found" });
 
     // Tạo hash mới cho mật khẩu mới
     const { hash, salt } = genPwd(newPassword);
@@ -402,7 +402,7 @@ const resetPassword = async (req, res) => {
     user.salt = salt;
     await user.save();
 
-    res.status(200).json({ message: "Đặt lại mật khẩu thành công" });
+    res.status(200).json({ message: "Reset password successfully" });
   } catch (err) {
     // Nếu lỗi là do token không hợp lệ hoặc hết hạn
     // if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
@@ -412,7 +412,7 @@ const resetPassword = async (req, res) => {
     // }
     // Các lỗi khác là lỗi server
     console.error(err); // Ghi lại lỗi để debug
-    return res.status(500).json({ message: "Đã xảy ra lỗi từ máy chủ." });
+    return res.status(500).json({ message: "Internal server error." });
   }
 };
 
@@ -445,12 +445,12 @@ const uploadUserAvatar = async (req, res) => {
     const user = await User.findByIdAndUpdate(req.user._id, { avatar_url: url }, { new: true });
 
     return res.status(200).json({
-      message: "Cập nhật avatar thành công",
+      message: "Update avatar successfully",
       avatar_url: url,
     });
   } catch (error) {
-    console.error("Lỗi tải lên avatar:", error);
-    return res.status(500).json({ message: "Lỗi server" });
+    console.error("Error uploading avatar:", error);
+    return res.status(500).json({ message: "Internal server error." });
   }
 };
 const uploadBackgroundProfile = async (req, res) => {
@@ -472,13 +472,13 @@ const UpdateDataProfile = async (req, res) => {
   const userId = req.user._id;
   const { username, fullName, email, bio, phone, location, gender } = req.body;
   if (!/^\d{10,12}$/.test(phone)) {
-    return res.status(400).json({ message: "Số điện thoại không hợp lệ" });
+    return res.status(400).json({ message: "Invalid phone number" });
   }
   try {
     await User.findByIdAndUpdate(userId, { username, fullName, email, bio, phone, location, gender }, { new: true });
 
     res.status(200).json({
-      message: "Cập nhật thông tin cá nhân thành công",
+      message: "Update personal information successfully",
       data: {
         username,
         fullName,
@@ -490,8 +490,8 @@ const UpdateDataProfile = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi cập nhật thông tin cá nhân:", error);
-    res.status(500).json({ message: "Lỗi server" });
+    console.error("Error updating personal information:", error);
+    res.status(500).json({ message: "Internal server error." });
   }
 };
 const getUserPrivacy = async (req, res) => {
@@ -499,12 +499,12 @@ const getUserPrivacy = async (req, res) => {
   try {
     const privacySetting = await UserSetting.find({ user_id: userId });
     res.status(200).json({
-      message: "Lấy cài đặt quyền riêng tư thành công",
+      message: "Get privacy settings successfully",
       data: privacySetting,
     });
   } catch (error) {
-    console.error("Lỗi lấy cài đặt quyền riêng tư:", error);
-    res.status(500).json({ message: error });
+    console.error("Error getting privacy settings:", error);
+    res.status(500).json({ message: "Internal server error." });
   }
 };
 const createPrivacyDefault = async (userId) => {
@@ -521,7 +521,7 @@ const createPrivacyDefault = async (userId) => {
   try {
     await UserSetting.insertMany(defaultSettings);
   } catch (error) {
-    console.error("Lỗi tạo cài đặt quyền riêng tư mặc định:", error);
+    console.error("Error creating default privacy settings:", error);
   }
 };
 const updateMultiPrivacySetting = async (req, res) => {
@@ -529,7 +529,7 @@ const updateMultiPrivacySetting = async (req, res) => {
   const { settings } = req.body; // [{ key, privacy_level, custom_group }]
 
   if (!Array.isArray(settings)) {
-    return res.status(400).json({ message: "settings phải là một mảng" });
+    return res.status(400).json({ message: "Settings must be an array" });
   }
 
   // Chỉ cho phép các key hợp lệ
@@ -555,15 +555,15 @@ const updateMultiPrivacySetting = async (req, res) => {
       }));
 
     if (bulkOps.length === 0) {
-      return res.status(400).json({ message: "Không có key hợp lệ để cập nhật" });
+      return res.status(400).json({ message: "No valid keys to update" });
     }
 
     await UserSetting.bulkWrite(bulkOps);
 
-    res.json({ message: "Cập nhật quyền riêng tư thành công" });
+    res.json({ message: "Update privacy settings successfully" });
   } catch (error) {
-    console.error("Lỗi cập nhật quyền riêng tư:", error);
-    res.status(500).json({ message: "Lỗi server" });
+    console.error("Error updating privacy settings:", error);
+    res.status(500).json({ message: "Internal server error." });
   }
 };
 async function isFriend(userA, userB) {
@@ -590,9 +590,9 @@ const getProfileWithPrivacy = async (req, res) => {
     }
 
     const user = await User.findOne({ $or: query }).select("-hash -salt -twoFASecret");
-    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-    if (user.is_deleted) return res.status(404).json({ message: "Nguoi dung da bi xoa" });
+    if (user.is_deleted) return res.status(404).json({ message: "User has been deleted" });
 
     const settingsArr = await UserSetting.find({ user_id: profileUserId });
     const privacyMap = {};
@@ -697,7 +697,7 @@ const generateTwoFASecret = async (req, res) => {
   try {
     const userId = req.user._id;
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user) return res.status(404).json({ message: "User not found" });
     const secret = speakeasy.generateSecret({
       name: "MySocialApp",
       length: 20,
@@ -718,8 +718,8 @@ const enableTwoFA = async (req, res) => {
     const userId = req.user._id;
     const { token } = req.body;
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
-    if (user.twoFAEnabled) return res.status(400).json({ message: "Đã kích hoạt 2FA" });
+    if (!user) return res.status(404).json({ message: "User not found" });
+    if (user.twoFAEnabled) return res.status(400).json({ message: "2FA is already enabled" });
     const verified = speakeasy.totp.verify({
       secret: user.twoFASecret,
       encoding: "base32",
@@ -728,13 +728,13 @@ const enableTwoFA = async (req, res) => {
     });
     if (verified) {
       await User.findByIdAndUpdate(userId, { twoFAEnabled: true });
-      return res.status(200).json({ message: "Xây dựng 2FA thành công" });
+      return res.status(200).json({ message: "2FA setup successfully" });
     } else {
-      return res.status(400).json({ message: "Token không hợp lệ" });
+      return res.status(400).json({ message: "Invalid token" });
     }
   } catch (error) {
-    console.error("Lỗi kích hoạt 2FA:", error);
-    return res.status(500).json({ message: "Lỗi server" });
+    console.error("Error enabling 2FA:", error);
+    return res.status(500).json({ message: "Internal server error." });
   }
 };
 
@@ -743,8 +743,8 @@ const verifyTwoFA = async (req, res) => {
     const userId = req.user._id;
     const { token } = req.body;
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
-    if (!user.twoFAEnabled) return res.status(400).json({ message: "Chua kích hoạt 2FA" });
+    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user.twoFAEnabled) return res.status(400).json({ message: "2FA is not enabled" });
     const verified = speakeasy.totp.verify({
       secret: user.twoFASecret,
       encoding: "base32",
@@ -753,13 +753,13 @@ const verifyTwoFA = async (req, res) => {
     });
     if (verified) {
       await User.findByIdAndUpdate(userId, { twoFAEnabled: true });
-      return res.status(200).json({ message: "Kích hoạt 2FA thành công" });
+      return res.status(200).json({ message: "2FA setup successfully" });
     } else {
-      return res.status(400).json({ message: "Mã xác thực 2FA không hợp lệ" });
+      return res.status(400).json({ message: "Invalid 2FA token" });
     }
   } catch (error) {
-    console.error("Lỗi kích hoạt 2FA:", error);
-    return res.status(500).json({ message: "Lỗi server" });
+    console.error("Error enabling 2FA:", error);
+    return res.status(500).json({ message: "Internal server error." });
   }
 };
 
@@ -767,8 +767,8 @@ const verifyTwoFALogin = async (req, res) => {
   try {
     const { userId, code } = req.body;
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
-    if (!user.twoFAEnabled) return res.status(400).json({ message: "Chua kích hoạt 2FA" });
+    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user.twoFAEnabled) return res.status(400).json({ message: "2FA is not enabled" });
     const verified = speakeasy.totp.verify({
       secret: user.twoFASecret,
       encoding: "base32",
@@ -801,8 +801,8 @@ const verifyTwoFALogin = async (req, res) => {
       return res.status(400).json({ message: "TwoFA code isn't valid" });
     }
   } catch (error) {
-    console.error("Lỗi kích hoạt 2FA:", error);
-    return res.status(500).json({ message: "Lỗi server" });
+    console.error("Error enabling 2FA:", error);
+    return res.status(500).json({ message: "Internal server error." });
   }
 };
 
@@ -811,8 +811,8 @@ const disableTwoFA = async (req, res) => {
     const userId = req.user._id;
     const { token } = req.body;
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
-    if (!user.twoFAEnabled) return res.status(400).json({ message: "Chua kích hoạt 2FA" });
+    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user.twoFAEnabled) return res.status(400).json({ message: "2FA is not enabled" });
     const verified = speakeasy.totp.verify({
       secret: user.twoFASecret,
       encoding: "base32",
@@ -821,13 +821,13 @@ const disableTwoFA = async (req, res) => {
     });
     if (verified) {
       await User.findByIdAndUpdate(userId, { twoFAEnabled: false });
-      return res.status(200).json({ message: "Tắt 2FA thành công" });
+      return res.status(200).json({ message: "2FA disabled successfully" });
     } else {
-      return res.status(400).json({ message: "Mã xác thức 2FA không hợp lệ" });
+      return res.status(400).json({ message: "Invalid 2FA token" });
     }
   } catch (error) {
-    console.error("Lỗi tắt 2FA:", error);
-    return res.status(500).json({ message: "Lỗi server" });
+    console.error("Error disabling 2FA:", error);
+    return res.status(500).json({ message: "Internal server error." });
   }
 };
 

@@ -108,8 +108,8 @@ module.exports = (io) => {
                   messageWithChannel.channelType === "group"
                     ? messageWithChannel.channelAvatar
                     : messageWithChannel.from.avatar_url,
-                fromName: messageWithChannel.from.fullName,
-                content: messageWithChannel.content,
+                fromName: messageWithChannel.channelName,
+                content: `${messageWithChannel.from.fullName}: ${messageWithChannel.content}`,
               }
             );
           }
