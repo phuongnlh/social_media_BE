@@ -694,7 +694,7 @@ const generateTwoFASecret = async (req, res) => {
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
     const secret = speakeasy.generateSecret({
-      name: "MySocialApp",
+      name: "DailyVibe (" + user.email + ")",
       length: 20,
     });
     await User.findByIdAndUpdate(userId, {
