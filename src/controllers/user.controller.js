@@ -8,12 +8,13 @@ const Friendship = require("../models/friendship.model");
 const speakeasy = require("speakeasy");
 const qrcode = require("qrcode");
 const { default: mongoose } = require("mongoose");
+const FCMToken = require("../models/fcm_tokens.model");
 // Đăng ký tài khoản người dùng mới
 const registerUser = async (req, res) => {
   try {
-    const { fullName, email, password, gender, dateOfBirth } = req.body;
+    const { fullName, email, password, gender, dateOfBirth, location } = req.body;
     // Kiểm tra email đã tồn tại hay chưa
-    const checkUser = await User.findOne({ email });
+    const checkUser = await User.findOne({ email, is_deleted: false });
     if (checkUser) {
       return res.status(400).json({ message: "Email already exists." });
     }
@@ -27,6 +28,7 @@ const registerUser = async (req, res) => {
       salt,
       gender,
       dateOfBirth,
+      location,
     }).save();
     newUser.username = newUser._id.toString();
     await newUser.save();
@@ -34,16 +36,19 @@ const registerUser = async (req, res) => {
     const token = signToken({ id: newUser._id }, "15m");
 
     // Gửi email xác thực tài khoản
-    const result = await sendVerificationEmail(email, token);
-    if (!result) {
+    try {
+      await sendVerificationEmail(email, token);
+    } catch (err) {
       await User.findByIdAndDelete(newUser._id);
-      throw new Error("Failed to send verification email.");
+      console.error(err);
+      return res.status(500).json({ message: "Failed to send verification email." });
     }
 
     res.status(201).json({
       message: "Registration successful! Please check your email to verify your account.",
     });
   } catch (err) {
+    await User.findByIdAndDelete(newUser._id);
     console.error(err);
     return res.status(500).json({ message: "Internal server error." });
   }
@@ -78,7 +83,7 @@ const resendVerification = async (req, res) => {
   const { email } = req.body;
   try {
     // Find user by email
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email, is_deleted: false });
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -120,7 +125,7 @@ const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
     // Tìm người dùng theo email
-    const user = await User.findOne({ email: email });
+    const user = await User.findOne({ email: email, is_deleted: false });
     if (!user) {
       return res.status(403).json({ message: "Email or Password invalid!" });
     }
@@ -159,12 +164,11 @@ const loginUser = async (req, res) => {
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: false,
-      domain: process.env.FRONTEND_URI,
       sameSite: "Lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
     // Trả về access token cho client
-    res.status(200).json({ accessToken });
+    res.status(200).json({ accessToken, refreshToken });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
@@ -175,39 +179,65 @@ const logoutUser = async (req, res) => {
   try {
     const token = req.headers.authorization?.split(" ")[1];
     const refreshToken = req.cookies.refreshToken;
+    const { deviceId, platform } = req.body;
 
     if (!token || !refreshToken) {
       return res.status(400).json({ message: "Thiếu token" });
     }
 
-    // Đưa access token vào blacklist để vô hiệu hóa
-    const decoded = verifyToken(token);
-    const exp = decoded?.exp;
-    const ttl = exp - Math.floor(Date.now() / 1000); // Thời gian còn lại của token
-
-    if (ttl > 0) {
-      await redisClient.set(`blacklist:${token}`, "true", { EX: ttl });
+    // ✅ Giải mã access token để lấy exp
+    let decoded;
+    try {
+      decoded = verifyToken(token);
+    } catch {
+      decoded = null; // nếu access token invalid vẫn cho logout
     }
 
-    // Xóa refresh token trong Redis
-    const refreshPayload = verifyToken(refreshToken);
-    const refreshKey = `refresh:${refreshPayload.id}:${refreshToken}`;
-    const userRefreshTokensSet = `user-sessions:${refreshPayload.id}`;
+    // ✅ Đưa access token vào blacklist (nếu còn hạn)
+    if (decoded?.exp) {
+      const ttl = decoded.exp - Math.floor(Date.now() / 1000);
+      if (ttl > 0) {
+        await redisClient.set(`blacklist:${token}`, "true", { EX: ttl });
+      }
+    }
 
-    // Dùng multi để đảm bảo cả hai lệnh cùng được thực thi
-    const multi = redisClient.multi();
-    multi.del(refreshKey); // Xóa key của token cụ thể
-    multi.sRem(userRefreshTokensSet, refreshToken); // Xóa token khỏi Set các phiên
-    await multi.exec();
+    // ✅ Xử lý refresh token
+    let refreshPayload;
+    try {
+      refreshPayload = verifyToken(refreshToken);
+    } catch {
+      refreshPayload = null;
+    }
 
-    // Xóa cookie refresh token
+    if (refreshPayload?.id) {
+      const refreshKey = `refresh:${refreshPayload.id}:${refreshToken}`;
+      const userSessionsSet = `user-sessions:${refreshPayload.id}`;
+      await redisClient.multi().del(refreshKey).sRem(userSessionsSet, refreshToken).exec();
+    }
+
+    // ✅ Xóa FCM token đúng thiết bị
+    if (deviceId && platform) {
+      try {
+        await FCMToken.deleteMany({
+          user_id: refreshPayload?.id,
+          deviceId,
+          platform,
+        });
+      } catch (dbErr) {
+        console.error("FCM cleanup failed:", dbErr.message);
+      }
+    }
+
+    // ✅ Xóa cookie refresh token
     res.clearCookie("refreshToken");
 
-    res.json({ message: "Logout successful" });
+    return res.status(200).json({ message: "Logout successful" });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error("Logout error:", err);
+    return res.status(500).json({ message: "Internal server error" });
   }
 };
+
 
 // Đăng xuất tất cả các phiên của người dùng
 const logoutAllUser = async (req, res) => {
@@ -249,7 +279,7 @@ const logoutAllUser = async (req, res) => {
     // Xóa cookie
     res.clearCookie("refreshToken");
 
-    res.json({ message: "Đã đăng xuất tất cả các phiên thành công" });
+    res.status(200).json({ message: "Logout all sessions successful" });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -259,7 +289,7 @@ const logoutAllUser = async (req, res) => {
 const changePassword = async (req, res) => {
   try {
     const userId = req.user._id; // Đã được xác thực từ middleware
-    const { oldPassword, newPassword } = req.body;
+    const { oldPassword, newPassword, deviceId, platform } = req.body;
 
     if (!oldPassword || !newPassword) {
       return res.status(400).json({ success: false, message: "Missing password fields" });
@@ -301,6 +331,19 @@ const changePassword = async (req, res) => {
       await multi.exec();
     }
 
+    // ✅ Xóa FCM token đúng thiết bị
+    if (deviceId && platform) {
+      try {
+        await FCMToken.deleteMany({
+          user_id: userId,
+          deviceId,
+          platform,
+        });
+      } catch (dbErr) {
+        console.error("FCM cleanup failed:", dbErr.message);
+      }
+    }
+
     // Xóa cookie của phiên hiện tại
     res.clearCookie("refreshToken");
 
@@ -318,7 +361,7 @@ const forgotPassword = async (req, res) => {
   const { email } = req.body;
   try {
     // Tìm người dùng theo email
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email, is_deleted: false });
     if (!user) return res.status(400).json({ message: "Không tìm thấy email" });
 
     // Tạo token khôi phục mật khẩu
@@ -329,7 +372,7 @@ const forgotPassword = async (req, res) => {
     // Gửi email khôi phục mật khẩu
     await sendResetPasswordEmail(user.email, resetLink);
 
-    res.json({ message: "Liên kết đặt lại mật khẩu đã được gửi đến email" });
+    res.json({ message: "Link reset password sent successfully to your email!" });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -346,7 +389,7 @@ const resetPassword = async (req, res) => {
     // Tìm người dùng từ ID trong token
     const user = await User.findById(decoded.id);
 
-    if (!user) return res.status(400).json({ message: "Không tìm thấy người dùng" });
+    if (!user) return res.status(400).json({ message: "User not found" });
 
     // Tạo hash mới cho mật khẩu mới
     const { hash, salt } = genPwd(newPassword);
@@ -354,7 +397,7 @@ const resetPassword = async (req, res) => {
     user.salt = salt;
     await user.save();
 
-    res.status(200).json({ message: "Đặt lại mật khẩu thành công" });
+    res.status(200).json({ message: "Reset password successfully" });
   } catch (err) {
     // Nếu lỗi là do token không hợp lệ hoặc hết hạn
     // if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
@@ -364,7 +407,7 @@ const resetPassword = async (req, res) => {
     // }
     // Các lỗi khác là lỗi server
     console.error(err); // Ghi lại lỗi để debug
-    return res.status(500).json({ message: "Đã xảy ra lỗi từ máy chủ." });
+    return res.status(500).json({ message: "Internal server error." });
   }
 };
 
@@ -397,12 +440,12 @@ const uploadUserAvatar = async (req, res) => {
     const user = await User.findByIdAndUpdate(req.user._id, { avatar_url: url }, { new: true });
 
     return res.status(200).json({
-      message: "Cập nhật avatar thành công",
+      message: "Update avatar successfully",
       avatar_url: url,
     });
   } catch (error) {
-    console.error("Lỗi tải lên avatar:", error);
-    return res.status(500).json({ message: "Lỗi server" });
+    console.error("Error uploading avatar:", error);
+    return res.status(500).json({ message: "Internal server error." });
   }
 };
 const uploadBackgroundProfile = async (req, res) => {
@@ -423,14 +466,14 @@ const uploadBackgroundProfile = async (req, res) => {
 const UpdateDataProfile = async (req, res) => {
   const userId = req.user._id;
   const { username, fullName, email, bio, phone, location, gender } = req.body;
-  if (!/^\d{10,12}$/.test(phone)) {
-    return res.status(400).json({ message: "Số điện thoại không hợp lệ" });
+  if (!!phone && !/^\d{10,12}$/.test(phone)) {
+    return res.status(400).json({ message: "Invalid phone number" });
   }
   try {
     await User.findByIdAndUpdate(userId, { username, fullName, email, bio, phone, location, gender }, { new: true });
 
     res.status(200).json({
-      message: "Cập nhật thông tin cá nhân thành công",
+      message: "Update personal information successfully",
       data: {
         username,
         fullName,
@@ -442,8 +485,8 @@ const UpdateDataProfile = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi cập nhật thông tin cá nhân:", error);
-    res.status(500).json({ message: "Lỗi server" });
+    console.error("Error updating personal information:", error);
+    res.status(500).json({ message: "Internal server error." });
   }
 };
 const getUserPrivacy = async (req, res) => {
@@ -451,12 +494,12 @@ const getUserPrivacy = async (req, res) => {
   try {
     const privacySetting = await UserSetting.find({ user_id: userId });
     res.status(200).json({
-      message: "Lấy cài đặt quyền riêng tư thành công",
+      message: "Get privacy settings successfully",
       data: privacySetting,
     });
   } catch (error) {
-    console.error("Lỗi lấy cài đặt quyền riêng tư:", error);
-    res.status(500).json({ message: error });
+    console.error("Error getting privacy settings:", error);
+    res.status(500).json({ message: "Internal server error." });
   }
 };
 const createPrivacyDefault = async (userId) => {
@@ -473,7 +516,7 @@ const createPrivacyDefault = async (userId) => {
   try {
     await UserSetting.insertMany(defaultSettings);
   } catch (error) {
-    console.error("Lỗi tạo cài đặt quyền riêng tư mặc định:", error);
+    console.error("Error creating default privacy settings:", error);
   }
 };
 const updateMultiPrivacySetting = async (req, res) => {
@@ -481,7 +524,7 @@ const updateMultiPrivacySetting = async (req, res) => {
   const { settings } = req.body; // [{ key, privacy_level, custom_group }]
 
   if (!Array.isArray(settings)) {
-    return res.status(400).json({ message: "settings phải là một mảng" });
+    return res.status(400).json({ message: "Settings must be an array" });
   }
 
   // Chỉ cho phép các key hợp lệ
@@ -507,15 +550,15 @@ const updateMultiPrivacySetting = async (req, res) => {
       }));
 
     if (bulkOps.length === 0) {
-      return res.status(400).json({ message: "Không có key hợp lệ để cập nhật" });
+      return res.status(400).json({ message: "No valid keys to update" });
     }
 
     await UserSetting.bulkWrite(bulkOps);
 
-    res.json({ message: "Cập nhật quyền riêng tư thành công" });
+    res.json({ message: "Update privacy settings successfully" });
   } catch (error) {
-    console.error("Lỗi cập nhật quyền riêng tư:", error);
-    res.status(500).json({ message: "Lỗi server" });
+    console.error("Error updating privacy settings:", error);
+    res.status(500).json({ message: "Internal server error." });
   }
 };
 async function isFriend(userA, userB) {
@@ -542,9 +585,9 @@ const getProfileWithPrivacy = async (req, res) => {
     }
 
     const user = await User.findOne({ $or: query }).select("-hash -salt -twoFASecret");
-    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-    if (user.is_deleted) return res.status(404).json({ message: "Nguoi dung da bi xoa" });
+    if (user.is_deleted) return res.status(404).json({ message: "User has been deleted" });
 
     const settingsArr = await UserSetting.find({ user_id: profileUserId });
     const privacyMap = {};
@@ -574,6 +617,7 @@ const getProfileWithPrivacy = async (req, res) => {
           fullName: user.fullName,
           avatar_url: user.avatar_url,
           cover_photo_url: user.cover_photo_url,
+          location: user.location,
           bio: null,
           email: null,
         },
@@ -596,6 +640,7 @@ const getProfileWithPrivacy = async (req, res) => {
             fullName: user.fullName,
             avatar_url: user.avatar_url,
             cover_photo_url: user.cover_photo_url,
+            location: user.location,
             bio: null,
             email: null,
           },
@@ -624,7 +669,8 @@ const getProfileWithPrivacy = async (req, res) => {
       fullName: user.fullName,
       avatar_url: user.avatar_url,
       cover_photo_url: user.cover_photo_url,
-      bio: (await canView("profile")) ? user.bio : null,
+      location: user.location,
+      bio: user.bio,
       email: (await canView("profile.email")) ? user.email : null,
     };
 
@@ -646,16 +692,16 @@ const generateTwoFASecret = async (req, res) => {
   try {
     const userId = req.user._id;
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
+    if (!user) return res.status(404).json({ message: "User not found" });
     const secret = speakeasy.generateSecret({
-      name: "MySocialApp",
+      name: "DailyVibe (" + user.email + ")",
       length: 20,
     });
     await User.findByIdAndUpdate(userId, {
       twoFASecret: secret.base32,
     });
     const qr = await qrcode.toDataURL(secret.otpauth_url);
-    return res.status(200).json({ qr });
+    return res.status(200).json({ qr, secret: secret.base32, otpauth_url: secret.otpauth_url });
   } catch (error) {
     console.error("Lỗi kích hoạt 2FA:", error);
     return res.status(500).json({ message: "Lỗi server" });
@@ -667,8 +713,8 @@ const enableTwoFA = async (req, res) => {
     const userId = req.user._id;
     const { token } = req.body;
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
-    if (user.twoFAEnabled) return res.status(400).json({ message: "Đã kích hoạt 2FA" });
+    if (!user) return res.status(404).json({ message: "User not found" });
+    if (user.twoFAEnabled) return res.status(400).json({ message: "2FA is already enabled" });
     const verified = speakeasy.totp.verify({
       secret: user.twoFASecret,
       encoding: "base32",
@@ -677,13 +723,13 @@ const enableTwoFA = async (req, res) => {
     });
     if (verified) {
       await User.findByIdAndUpdate(userId, { twoFAEnabled: true });
-      return res.status(200).json({ message: "Xây dựng 2FA thành công" });
+      return res.status(200).json({ message: "2FA setup successfully" });
     } else {
-      return res.status(400).json({ message: "Token không hợp lệ" });
+      return res.status(400).json({ message: "Invalid token" });
     }
   } catch (error) {
-    console.error("Lỗi kích hoạt 2FA:", error);
-    return res.status(500).json({ message: "Lỗi server" });
+    console.error("Error enabling 2FA:", error);
+    return res.status(500).json({ message: "Internal server error." });
   }
 };
 
@@ -692,8 +738,8 @@ const verifyTwoFA = async (req, res) => {
     const userId = req.user._id;
     const { token } = req.body;
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
-    if (!user.twoFAEnabled) return res.status(400).json({ message: "Chua kích hoạt 2FA" });
+    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user.twoFAEnabled) return res.status(400).json({ message: "2FA is not enabled" });
     const verified = speakeasy.totp.verify({
       secret: user.twoFASecret,
       encoding: "base32",
@@ -702,13 +748,13 @@ const verifyTwoFA = async (req, res) => {
     });
     if (verified) {
       await User.findByIdAndUpdate(userId, { twoFAEnabled: true });
-      return res.status(200).json({ message: "Kích hoạt 2FA thành công" });
+      return res.status(200).json({ message: "2FA setup successfully" });
     } else {
-      return res.status(400).json({ message: "Mã xác thực 2FA không hợp lệ" });
+      return res.status(400).json({ message: "Invalid 2FA token" });
     }
   } catch (error) {
-    console.error("Lỗi kích hoạt 2FA:", error);
-    return res.status(500).json({ message: "Lỗi server" });
+    console.error("Error enabling 2FA:", error);
+    return res.status(500).json({ message: "Internal server error." });
   }
 };
 
@@ -716,8 +762,8 @@ const verifyTwoFALogin = async (req, res) => {
   try {
     const { userId, code } = req.body;
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
-    if (!user.twoFAEnabled) return res.status(400).json({ message: "Chua kích hoạt 2FA" });
+    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user.twoFAEnabled) return res.status(400).json({ message: "2FA is not enabled" });
     const verified = speakeasy.totp.verify({
       secret: user.twoFASecret,
       encoding: "base32",
@@ -740,18 +786,17 @@ const verifyTwoFALogin = async (req, res) => {
       res.cookie("refreshToken", refreshToken, {
         httpOnly: true,
         secure: false,
-        domain: process.env.FRONTEND_URI,
         sameSite: "Lax",
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
       // Trả về access token cho client
-      res.status(200).json({ accessToken });
+      res.status(200).json({ accessToken, refreshToken });
     } else {
-      return res.status(400).json({ message: "Mã xác thực 2FA không hợp lệ" });
+      return res.status(400).json({ message: "TwoFA code isn't valid" });
     }
   } catch (error) {
-    console.error("Lỗi kích hoạt 2FA:", error);
-    return res.status(500).json({ message: "Lỗi server" });
+    console.error("Error enabling 2FA:", error);
+    return res.status(500).json({ message: "Internal server error." });
   }
 };
 
@@ -760,8 +805,8 @@ const disableTwoFA = async (req, res) => {
     const userId = req.user._id;
     const { token } = req.body;
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "Không tìm thấy người dùng" });
-    if (!user.twoFAEnabled) return res.status(400).json({ message: "Chua kích hoạt 2FA" });
+    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user.twoFAEnabled) return res.status(400).json({ message: "2FA is not enabled" });
     const verified = speakeasy.totp.verify({
       secret: user.twoFASecret,
       encoding: "base32",
@@ -770,13 +815,13 @@ const disableTwoFA = async (req, res) => {
     });
     if (verified) {
       await User.findByIdAndUpdate(userId, { twoFAEnabled: false });
-      return res.status(200).json({ message: "Tắt 2FA thành công" });
+      return res.status(200).json({ message: "2FA disabled successfully" });
     } else {
-      return res.status(400).json({ message: "Mã xác thức 2FA không hợp lệ" });
+      return res.status(400).json({ message: "Invalid 2FA token" });
     }
   } catch (error) {
-    console.error("Lỗi tắt 2FA:", error);
-    return res.status(500).json({ message: "Lỗi server" });
+    console.error("Error disabling 2FA:", error);
+    return res.status(500).json({ message: "Internal server error." });
   }
 };
 

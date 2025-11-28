@@ -356,6 +356,23 @@ const updateUserStatus = async (req, res) => {
       select: "-hash -salt -twoFASecret",
     });
 
+    if (action === "block") {
+      const UserReport = require("../../models/userReport.model");
+      await UserReport.updateMany(
+        {
+          reportedUser: userId,
+          status: { $in: ["pending", "investigating"] },
+        },
+        {
+          $set: {
+            status: "resolved",
+            actionTaken: "user_banned",
+            resolvedAt: new Date(),
+          },
+        }
+      );
+    }
+
     // Log admin action
     console.log(`Admin action: ${action} user ${userId}. Reason: ${reason || "No reason provided"}`);
 
@@ -376,6 +393,19 @@ const updateUserStatus = async (req, res) => {
       message: "Internal server error while updating user status",
       error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
+  }
+};
+
+const updateUserData = async (req, res) => {
+  const { userId } = req.params;
+  const { data } = req.body;
+
+  try {
+    const user = await User.findByIdAndUpdate(userId, data, { new: true, select: "-hash -salt -twoFASecret" });
+    res.status(200).json({ success: true, message: "User data updated successfully", data: user });
+  } catch (error) {
+    console.error("Error updating user data:", error);
+    res.status(500).json({ message: "Internal server error while updating user data" });
   }
 };
 
@@ -655,9 +685,6 @@ const deleteUserById = async (req, res) => {
   try {
     const { userId } = req.params;
     await User.findByIdAndUpdate(userId, {
-      fullName: "Deleted User",
-      email: null,
-      username: null,
       avatar_url: "https://minio.dailyvibe.online/dailyvibe/avatars/avatar.jpg",
       is_deleted: true,
       isActive: false,
@@ -682,4 +709,5 @@ module.exports = {
   getPlatformStatistics,
   getTopPosters,
   deleteUserById,
+  updateUserData,
 };

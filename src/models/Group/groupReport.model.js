@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 
-const userReportSchema = new mongoose.Schema(
+const groupReportSchema = new mongoose.Schema(
   {
     // Người báo cáo
     reportedBy: {
@@ -9,17 +9,10 @@ const userReportSchema = new mongoose.Schema(
       required: true,
     },
 
-    // Bài viết bị báo cáo
-    reportedPost: {
+    // Nhóm bị báo cáo
+    reportedGroup: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Post",
-      required: true,
-    },
-
-    // Người viết bài bị báo cáo
-    reportedUser: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
+      ref: "Group",
       required: true,
     },
 
@@ -30,13 +23,10 @@ const userReportSchema = new mongoose.Schema(
         "spam",
         "harassment",
         "inappropriate_content",
-        "fake_news",
-        "copyright",
-        "violence",
+        "fake_information",
         "hate_speech",
-        "self_harm",
+        "violence",
         "scam",
-        "impersonation",
         "other",
       ],
       required: true,
@@ -52,7 +42,7 @@ const userReportSchema = new mongoose.Schema(
     // Trạng thái xử lý
     status: {
       type: String,
-      enum: ["pending", "investigating", "resolved", "dismissed"],
+      enum: ["pending", "resolved", "dismissed"],
       default: "pending",
     },
 
@@ -61,8 +51,8 @@ const userReportSchema = new mongoose.Schema(
       type: String,
       enum: [
         "none",
-        "content_removed",
-        "user_banned",
+        "warning_sent",
+        "group_deleted",
       ],
       default: "none",
     },
@@ -75,21 +65,21 @@ const userReportSchema = new mongoose.Schema(
 );
 
 // Indexes
-userReportSchema.index(
-  { reportedPost: 1, reportedBy: 1 },
+groupReportSchema.index(
+  { reportedGroup: 1, reportedBy: 1 },
   {
     unique: true,
     partialFilterExpression: {
-      status: { $in: ["pending"] }
+      status: { $in: "pending" }
     }
   }
-); // Một người chỉ có thể báo cáo cùng một bài viết một lần khi báo cáo đang chờ xử lý
-userReportSchema.index({ status: 1, createdAt: -1 });
-userReportSchema.index({ reportedPost: 1, createdAt: -1 });
-userReportSchema.index({ reportedUser: 1, createdAt: -1 });
+); // Một người dùng chỉ có thể báo cáo cùng một nhóm một lần khi báo cáo đang chờ xử lý
+groupReportSchema.index({ status: 1, createdAt: -1 });
+groupReportSchema.index({ reportedGroup: 1, createdAt: -1 });
+groupReportSchema.index({ assignedTo: 1, status: 1 });
 
 // Pre-save middleware
-userReportSchema.pre("save", function (next) {
+groupReportSchema.pre("save", function (next) {
   // Set resolvedAt khi status thay đổi thành resolved
   if (
     this.isModified("status") &&
@@ -102,7 +92,7 @@ userReportSchema.pre("save", function (next) {
 });
 
 // Static methods
-userReportSchema.statics.getReportStats = async function (timeframe = "30d") {
+groupReportSchema.statics.getReportStats = async function (timeframe = "30d") {
   const days = parseInt(timeframe.replace("d", ""));
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - days);
@@ -127,12 +117,12 @@ userReportSchema.statics.getReportStats = async function (timeframe = "30d") {
   ]);
 };
 
-userReportSchema.statics.getTopReportedPosts = async function (limit = 10) {
+groupReportSchema.statics.getTopReportedGroups = async function (limit = 10) {
   return await this.aggregate([
-    { $match: { status: "pending" } },
+    { $match: { status: { $in: ["pending", "investigating"] } } },
     {
       $group: {
-        _id: "$reportedPost",
+        _id: "$reportedGroup",
         reportCount: { $sum: 1 },
         reportTypes: { $addToSet: "$reportType" },
         latestReport: { $max: "$createdAt" },
@@ -142,15 +132,46 @@ userReportSchema.statics.getTopReportedPosts = async function (limit = 10) {
     { $limit: limit },
     {
       $lookup: {
-        from: "posts",
+        from: "groups",
         localField: "_id",
         foreignField: "_id",
-        as: "postDetails",
+        as: "groupDetails",
       },
     },
   ]);
 };
 
-const UserReport = mongoose.model("UserReport", userReportSchema);
+// Instance methods
+groupReportSchema.methods.addAdminNote = function (adminId, note) {
+  this.adminNotes.push({
+    admin: adminId,
+    note: note,
+    createdAt: new Date(),
+  });
+  return this.save();
+};
 
-module.exports = UserReport;
+groupReportSchema.methods.assignTo = function (adminId) {
+  this.assignedTo = adminId;
+  if (this.status === "pending") {
+    this.status = "investigating";
+  }
+  return this.save();
+};
+
+groupReportSchema.methods.resolve = function (
+  adminId,
+  resolution,
+  actionTaken = "none"
+) {
+  this.status = "resolved";
+  this.resolvedBy = adminId;
+  this.resolvedAt = new Date();
+  this.resolution = resolution;
+  this.actionTaken = actionTaken;
+  return this.save();
+};
+
+const GroupReport = mongoose.model("GroupReport", groupReportSchema);
+
+module.exports = GroupReport;

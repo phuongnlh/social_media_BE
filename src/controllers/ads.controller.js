@@ -271,7 +271,7 @@ const getAllAdsByUserId = async (req, res) => {
             });
         }
 
-        const ads = await Ads.find({ user_id: userId }).sort({ createdAt: -1 });
+        const ads = await Ads.find({ user_id: userId }).lean();
 
         if (!ads || ads.length === 0) {
             return res.status(200).json({
@@ -288,16 +288,34 @@ const getAllAdsByUserId = async (req, res) => {
                     .lean();
 
                 return {
-                    ...ad.toObject(),
+                    ...ad,
                     payment: payment || null
                 };
             })
         );
 
+        // Sort: Priority statuses (active, paused, waiting_payment) at same level, then others
+        // Within each group, sort by createdAt desc (newest first)
+        const sortedAds = adsWithPayment.sort((a, b) => {
+            const priorityStatuses = ['active', 'paused', 'waiting_payment'];
+
+            const isAPriority = priorityStatuses.includes(a.status);
+            const isBPriority = priorityStatuses.includes(b.status);
+
+            // If one is priority and other is not, priority comes first
+            if (isAPriority && !isBPriority) return -1;
+            if (!isAPriority && isBPriority) return 1;
+
+            // Sort by createdAt descending (newest first)
+            const dateA = new Date(a.created_at).getTime();
+            const dateB = new Date(b.created_at).getTime();
+            return dateB - dateA;
+        });
+
         return res.status(200).json({
             success: true,
             message: "Ads with payment info retrieved successfully",
-            data: adsWithPayment
+            data: sortedAds
         });
 
     } catch (error) {
@@ -1200,49 +1218,49 @@ const getInteractionStats = async (req, res) => {
 
         // Get comment statistics for this specific post
         const commentStats = await Comment.aggregate([
-          {
-            $match: {
-              post_id: ad.post_id,
-              createdAt: { $gte: startDate, $lte: endDate },
-              is_deleted: false,
-            },
-          },
-          {
-            $group: {
-              _id: groupBy,
-              count: { $sum: 1 },
-            },
-          },
-          {
-            $addFields: {
-              dateString: {
-                $dateToString: {
-                  format: dateFormat,
-                  date: {
-                    $dateFromParts:
-                      period === "day"
-                        ? {
-                            year: "$_id.year",
-                            month: "$_id.month",
-                            day: "$_id.day",
-                          }
-                        : {
-                            isoWeekYear: "$_id.year",
-                            isoWeek: "$_id.week",
-                          },
-                  },
+            {
+                $match: {
+                    post_id: ad.post_id,
+                    createdAt: { $gte: startDate, $lte: endDate },
+                    is_deleted: false,
                 },
-              },
             },
-          },
-          {
-            $sort: {
-              "_id.year": 1,
-              "_id.month": 1,
-              "_id.day": 1,
-              "_id.week": 1,
+            {
+                $group: {
+                    _id: groupBy,
+                    count: { $sum: 1 },
+                },
             },
-          },
+            {
+                $addFields: {
+                    dateString: {
+                        $dateToString: {
+                            format: dateFormat,
+                            date: {
+                                $dateFromParts:
+                                    period === "day"
+                                        ? {
+                                            year: "$_id.year",
+                                            month: "$_id.month",
+                                            day: "$_id.day",
+                                        }
+                                        : {
+                                            isoWeekYear: "$_id.year",
+                                            isoWeek: "$_id.week",
+                                        },
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                $sort: {
+                    "_id.year": 1,
+                    "_id.month": 1,
+                    "_id.day": 1,
+                    "_id.week": 1,
+                },
+            },
         ]);
 
         // Get reaction statistics for this specific post
@@ -1381,14 +1399,14 @@ const getActivitiesByUserId = async (req, res) => {
         const limitNum = parseInt(limit);
         const skip = (pageNum - 1) * limitNum;
         const filter = { user_id: new mongoose.Types.ObjectId(user_id) };
-        
+
         // Filter by campaign name
         if (search && search.trim()) {
             const matchingAds = await Ads.find({
                 user_id: new mongoose.Types.ObjectId(user_id),
                 campaign_name: { $regex: search.trim(), $options: 'i' }
             }).distinct('_id');
-            
+
             if (matchingAds.length === 0) {
                 return res.status(200).json({
                     success: true,
@@ -1407,7 +1425,7 @@ const getActivitiesByUserId = async (req, res) => {
                     }
                 });
             }
-            
+
             filter.ads_id = { $in: matchingAds };
         }
 
@@ -1423,14 +1441,14 @@ const getActivitiesByUserId = async (req, res) => {
                                 foreignField: '_id',
                                 as: 'campaign',
                                 pipeline: [
-                                    { 
-                                        $project: { 
+                                    {
+                                        $project: {
                                             campaign_name: 1,
                                             target_views: 1,
                                             current_views: 1,
                                             status: 1,
                                             created_at: 1
-                                        } 
+                                        }
                                     }
                                 ]
                             }

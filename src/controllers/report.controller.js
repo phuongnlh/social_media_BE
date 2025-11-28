@@ -18,7 +18,7 @@ const createReport = async (req, res) => {
       });
     }
 
-    const { reportedPost, reportType, description, reason, evidence = [], reporterInfo = {} } = req.body;
+    const { reportedPost, reportType, reason } = req.body;
 
     // Kiểm tra bài viết có tồn tại không
     const post = await Post.findById(reportedPost);
@@ -33,6 +33,7 @@ const createReport = async (req, res) => {
     const existingReport = await UserReport.findOne({
       reportedPost,
       reportedBy: req.user._id,
+      status: "pending",
     });
 
     if (existingReport) {
@@ -42,35 +43,63 @@ const createReport = async (req, res) => {
       });
     }
 
-    // Tạo báo cáo mới
+    // Kiểm tra xem có report nào đang investigating không
+    const investigatingReport = await UserReport.findOne({
+      reportedPost,
+      status: "investigating",
+    });
+
+    // Tạo báo cáo mới với status phù hợp
     const report = new UserReport({
       reportedBy: req.user._id,
       reportedPost,
       reportedUser: post.user_id,
       reportType,
-      description,
       reason,
-      evidence,
-      reporterInfo: {
-        ...reporterInfo,
-        ipAddress: req.ip,
-        userAgent: req.get("User-Agent"),
-      },
-      metadata: {
-        reportSource: req.get("User-Agent")?.includes("Mobile") ? "mobile" : "web",
-        language: req.get("Accept-Language")?.split(",")[0] || "en",
-      },
+      status: investigatingReport ? "investigating" : "pending",
     });
 
     await report.save();
 
-    const countReports = await UserReport.countDocuments({ reportedPost });
+    // Đếm số lượng báo cáo đang pending và investigating cho bài viết này
+    const countReports = await UserReport.countDocuments({ 
+      reportedPost,
+      status: { $in: ["pending", "investigating"] }
+    });
 
-    if (countReports >= 5) {
+    // Cập nhật severity của post dựa trên số lượng báo cáo
+    let newSeverity = "low";
+    if (countReports >= 30) {
+      newSeverity = "critical";
+    } else if (countReports >= 20) {
+      newSeverity = "high";
+    } else if (countReports >= 10) {
+      newSeverity = "medium";
+    }
+
+    post.severity = newSeverity;
+    await post.save();
+
+    // Nếu post đã đạt critical, set tất cả report thành investigating
+    if (newSeverity === "critical") {
+      await UserReport.updateMany(
+        {
+          reportedPost,
+          status: { $in: ["pending"] }
+        },
+        {
+          $set: { status: "investigating" }
+        }
+      );
+    }
+
+    // Tự động xóa bài viết nếu có từ 15 báo cáo trở lên
+    if (countReports >= 15) {
       const existingAds = await adsModel.findOne({ post_id: reportedPost });
       if (!existingAds) {
         post.is_deleted = true;
         await post.save();
+        
         try {
           const io = getSocketIO();
           const notificationsNamespace = io.of("/notifications");
@@ -95,7 +124,7 @@ const createReport = async (req, res) => {
     // Populate thông tin cần thiết
     await report.populate([
       { path: "reportedBy", select: "username avatar" },
-      { path: "reportedPost", select: "content images createdAt" },
+      { path: "reportedPost", select: "content images createdAt severity" },
       { path: "reportedUser", select: "username avatar" },
     ]);
 

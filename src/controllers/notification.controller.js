@@ -34,7 +34,7 @@ const getNotifications = async (req, res) => {
     console.error("Error getting notifications:", error);
     return res.status(500).json({
       success: false,
-      message: "Không thể lấy danh sách thông báo",
+      message: "Internal server error while fetching notifications",
       error: error.message
     });
   }
@@ -58,7 +58,7 @@ const getUnreadCount = async (req, res) => {
     console.error("Error getting unread count:", error);
     return res.status(500).json({
       success: false,
-      message: "Không thể lấy số lượng thông báo chưa đọc",
+      message: "Internal server error while fetching unread count",
       error: error.message
     });
   }
@@ -79,7 +79,7 @@ const markAsRead = async (req, res) => {
     if (!notification) {
       return res.status(404).json({
         success: false,
-        message: "Không tìm thấy thông báo"
+        message: "Notification not found"
       });
     }
     
@@ -87,14 +87,14 @@ const markAsRead = async (req, res) => {
     
     return res.status(200).json({
       success: true,
-      message: "Đã đánh dấu thông báo là đã đọc",
+      message: "Notification marked as read",
       data: { notification: updated }
     });
   } catch (error) {
     console.error("Error marking notification as read:", error);
     return res.status(500).json({
       success: false,
-      message: "Không thể đánh dấu thông báo là đã đọc",
+      message: "Cannot mark notification as read",
       error: error.message
     });
   }
@@ -109,13 +109,13 @@ const markAllAsRead = async (req, res) => {
     
     return res.status(200).json({
       success: true,
-      message: "Đã đánh dấu tất cả thông báo là đã đọc"
+      message: "All notifications marked as read"
     });
   } catch (error) {
     console.error("Error marking all notifications as read:", error);
     return res.status(500).json({
       success: false,
-      message: "Không thể đánh dấu tất cả thông báo là đã đọc",
+      message: "Internal server error while marking all notifications as read",
       error: error.message
     });
   }
@@ -136,7 +136,7 @@ const deleteNotification = async (req, res) => {
     if (!notification) {
       return res.status(404).json({
         success: false,
-        message: "Không tìm thấy thông báo"
+        message: "Notification not found"
       });
     }
     
@@ -144,13 +144,13 @@ const deleteNotification = async (req, res) => {
     
     return res.status(200).json({
       success: true,
-      message: "Đã xóa thông báo thành công"
+      message: "Notification deleted successfully"
     });
   } catch (error) {
     console.error("Error deleting notification:", error);
     return res.status(500).json({
       success: false,
-      message: "Không thể xóa thông báo",
+      message: "Cannot delete notification",
       error: error.message
     });
   }

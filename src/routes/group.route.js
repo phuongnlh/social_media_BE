@@ -11,6 +11,7 @@ router.get("/my-groups", isLogin, groupController.getMyGroups); // Lấy danh s�
 router.post("/request-join", isLogin, groupController.requestJoinGroup); // Gửi yêu cầu tham gia group
 router.post("/leave", isLogin, groupController.leaveGroup); // Rời group
 router.get("/get-groups", isLogin,groupController.getAllGroups); // Lấy tất cả group
+router.post("/report-group", isLogin, groupController.createGroupReport); // Báo cáo nhóm
 router.get("/get-group/:group_id", isLogin, groupController.getGroupDetail); // Lấy thông tin group theo ID
 router.get("/members/:group_id", isLogin, groupController.getGroupMembers); // Lấy danh sách thành viên
 

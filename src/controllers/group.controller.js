@@ -6,9 +6,12 @@ const Comment = require("../models/Comment_Reaction/comment.model");
 const CommentReaction = require("../models/Comment_Reaction/comment_reactions.model");
 const PostReaction = require("../models/Comment_Reaction/post_reaction.model");
 const PostMedia = require("../models/postMedia.model");
+const GroupReport = require("../models/Group/groupReport.model");
 const notificationService = require("../services/notification.service");
 const { Types } = require("mongoose");
 const { getSocketIO, getUserSocketMap } = require("../socket/io-instance");
+const Fuse = require("fuse.js");
+const group_memberModel = require("../models/Group/group_member.model");
 
 // Hàm kiểm tra quyền admin trong group
 const isGroupAdmin = async (group_id, user_id) => {
@@ -17,6 +20,14 @@ const isGroupAdmin = async (group_id, user_id) => {
     user: user_id,
     role: "admin",
     status: "approved",
+  });
+  return !!member;
+};
+
+const isGroupAdminCreator = async (group_id, user_id) => {
+  const member = await Group.findOne({
+    _id: group_id,
+    creator: user_id,
   });
   return !!member;
 };
@@ -75,16 +86,15 @@ const createGroup = async (req, res) => {
 const getMyGroups = async (req, res) => {
   try {
     const user_id = req.user._id;
+
+    // Lấy các group đã tham gia
     const memberships = await GroupMember.find({
       user: user_id,
       status: "approved",
     }).populate("group");
-    if (!memberships.length) {
-      return res
-        .status(200)
-        .json({ message: "You haven't joined any groups yet", groups: [] });
-    }
-    const groupsWithStats = await Promise.all(
+
+    // Map các group đã tham gia với stats
+    const joinedGroupsWithStats = await Promise.all(
       memberships.map(async (m) => {
         const stats = await getGroupStats(m.group._id);
         return {
@@ -92,11 +102,59 @@ const getMyGroups = async (req, res) => {
           role: m.role,
           ...stats,
           lastActivity: stats.lastActivity || m.group.created_at,
+          isJoined: true, // Đánh dấu đã tham gia
         };
       })
     );
-    res.status(200).json({ groups: groupsWithStats });
+
+    let finalGroups = joinedGroupsWithStats;
+
+    // Nếu đã tham gia dưới 4 nhóm, lấy thêm nhóm ngẫu nhiên
+    if (joinedGroupsWithStats.length < 4) {
+      const joinedGroupIds = memberships.map((m) => m.group._id);
+      const neededCount = 4 - joinedGroupsWithStats.length;
+
+      // Lấy các group mà user chưa tham gia (loại trừ các nhóm đã ban user)
+      const bannedGroups = await GroupMember.find({
+        user: user_id,
+        status: "banned",
+      }).distinct("group");
+
+      const randomGroups = await Group.aggregate([
+        {
+          $match: {
+            _id: {
+              $nin: [...joinedGroupIds, ...bannedGroups]
+            },
+          },
+        },
+        { $sample: { size: neededCount } },
+      ]);
+
+      // Map các group ngẫu nhiên với stats
+      const randomGroupsWithStats = await Promise.all(
+        randomGroups.map(async (group) => {
+          const stats = await getGroupStats(group._id);
+          return {
+            ...group,
+            role: null, // Chưa có role
+            ...stats,
+            lastActivity: stats.lastActivity || group.created_at,
+            isJoined: false, // Đánh dấu chưa tham gia
+          };
+        })
+      );
+
+      finalGroups = [...joinedGroupsWithStats, ...randomGroupsWithStats];
+    }
+
+    res.status(200).json({
+      groups: finalGroups,
+      joinedCount: joinedGroupsWithStats.length,
+      totalCount: finalGroups.length
+    });
   } catch (err) {
+    console.error("getMyGroups error:", err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -122,9 +180,9 @@ const getGroupMembers = async (req, res) => {
     // parse roles
     const roleArr = roles
       ? String(roles)
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
       : null;
 
     // parse sort "role,-postCount,name" -> sortObj cho $sort
@@ -195,15 +253,15 @@ const getGroupMembers = async (req, res) => {
       // Search theo tên / username (không phân biệt hoa thường)
       ...(search
         ? [
-            {
-              $match: {
-                $or: [
-                  { "user.fullName": { $regex: search, $options: "i" } },
-                  { "user.username": { $regex: search, $options: "i" } },
-                ],
-              },
+          {
+            $match: {
+              $or: [
+                { "user.fullName": { $regex: search, $options: "i" } },
+                { "user.username": { $regex: search, $options: "i" } },
+              ],
             },
-          ]
+          },
+        ]
         : []),
 
       // Lookup đếm bài đã duyệt của user trong group
@@ -659,7 +717,7 @@ const deleteGroup = async (req, res) => {
   try {
     const { group_id } = req.params;
     const admin_id = req.user._id;
-    const isAdmin = await isGroupAdmin(group_id, admin_id);
+    const isAdmin = await isGroupAdminCreator(group_id, admin_id);
     if (!isAdmin) return res.status(403).json({ error: "Permission denied" });
 
     // 1. Lấy tất cả post IDs của group
@@ -698,10 +756,11 @@ const deleteGroup = async (req, res) => {
     // 5. Xóa group posts (sau khi đã xóa comments và reactions)
     await GroupPost.deleteMany({ group_id });
 
-    // 6. Xóa members và requests
+    // 6. Xóa members , requests , reports của group
     await Promise.all([
       GroupMember.deleteMany({ group: group_id }),
       GroupRequest.deleteMany({ group_id }),
+      GroupReport.deleteMany({ reportedGroup: group_id }),
     ]);
 
     // 7. Cuối cùng xóa group
@@ -754,8 +813,7 @@ const banMember = async (req, res) => {
         io,
         user_id,
         "group_banned",
-        `Bạn đã bị cấm khỏi nhóm "${group.name}".${
-          ban_reason ? " Lý do: " + ban_reason : ""
+        `Bạn đã bị cấm khỏi nhóm "${group.name}".${ban_reason ? " Lý do: " + ban_reason : ""
         }`,
         userSocketMap
       );
@@ -823,8 +881,7 @@ const restrictMember = async (req, res) => {
         io,
         user_id,
         "group_restricted",
-        `Bạn đã bị hạn chế đăng bài trong nhóm "${group.name}".${
-          restrict_reason ? " Lý do: " + restrict_reason : ""
+        `Bạn đã bị hạn chế đăng bài trong nhóm "${group.name}".${restrict_reason ? " Lý do: " + restrict_reason : ""
         }`,
         userSocketMap
       );
@@ -904,26 +961,218 @@ const getUserGroups = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+const fuseCache = new Map();
+
+function removeAccents(str) {
+  if (!str) return '';
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase();
+}
+
+function getGlobalCacheKey() {
+  return 'global_group_search';
+}
 
 const searchGroups = async (req, res) => {
+  const { query, page = 1, limit = 12 } = req.query;
+  const user_id = req.user?._id?.toString();
+  const trimmedQuery = query?.trim();
+  const pageNum = parseInt(page, 10);
+  const limitNum = parseInt(limit, 10);
+
   try {
-    const { query } = req.query;
-    const groups = await Group.find({
-      name: { $regex: query, $options: "i" },
-    });
-    const groupsWithStats = await Promise.all(
-      groups.map(async (m) => {
-        const stats = await getGroupStats(m._id);
+    // 1. Lấy tất cả group (chỉ cần field cần thiết)
+    const groups = await Group.find({ is_deleted: false })
+      .lean()
+      .select('_id name description cover_url privacy created_at')
+      .sort({ created_at: -1 });
+
+    if (groups.length === 0) {
+      return res.json({ data: [], total: 0, page: pageNum, limit: limitNum });
+    }
+
+    // 2. Tạo Fuse instance (cache toàn cục)
+    const cacheKey = getGlobalCacheKey();
+    let fuse = fuseCache.get(cacheKey);
+
+    if (!fuse) {
+      fuse = new Fuse(groups, {
+        keys: [
+          { name: 'name', weight: 1.0 },
+          { name: 'description', weight: 0.7 },
+        ],
+        threshold: 0.4,
+        includeScore: true,
+        shouldSort: true,
+        minMatchCharLength: 1,
+        ignoreLocation: true,
+        getFn: (obj, path) => removeAccents(obj[path] || ''),
+      });
+      fuseCache.set(cacheKey, fuse);
+    }
+
+    // 3. Tìm kiếm với Fuse.js
+    let results = groups;
+    if (trimmedQuery) {
+      const fuseResults = fuse.search(trimmedQuery);
+      results = fuseResults.map(r => r.item);
+    }
+
+    // 4. Phân trang
+    const total = results.length;
+    const start = (pageNum - 1) * limitNum;
+    const end = start + limitNum;
+    const paginated = results.slice(start, end);
+
+    // 5. Gắn stats + isJoined + role (song song)
+    const groupsWithDetails = await Promise.all(
+      paginated.map(async (group) => {
+        const stats = await getGroupStats(group._id);
+
+        let isJoined = false;
+        let role = null;
+
+        if (user_id) {
+          const membership = await group_memberModel.findOne({
+            group: group._id,
+            user: user_id,
+            status: "approved",
+          }).lean();
+
+          if (membership) {
+            isJoined = true;
+            role = membership.role;
+          }
+        }
+
         return {
-          ...m.toObject(),
+          _id: group._id,
+          name: group.name,
+          description: group.description || "",
+          cover_url: group.cover_url || null,
+          privacy: group.privacy,
+          created_at: group.created_at,
           ...stats,
-          lastActivity: stats.lastActivity || m.created_at,
+          lastActivity: stats.lastActivity || group.created_at,
+          isJoined,
+          role,
         };
       })
     );
-    res.status(200).json(groupsWithStats);
+
+    // 6. Trả về
+    res.json({
+      data: groupsWithDetails,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      hasMore: end < total,
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Search groups error:', error);
+    res.status(500).json({ error: 'Lỗi tìm kiếm nhóm' });
+  }
+};
+
+const createGroupReport = async (req, res) => {
+  try {
+    const { group_id, reportType, reason } = req.body;
+    const user_id = req.user._id;
+
+    // Validate input
+    if (!group_id || !reportType || !reason) {
+      return res.status(400).json({
+        error: "group_id, reportType, and reason are required"
+      });
+    }
+
+    // Kiểm tra group có tồn tại không
+    const group = await Group.findById(group_id);
+    if (!group) {
+      return res.status(404).json({ error: "Group not found" });
+    }
+
+    // Kiểm tra có được phép report tiếp không
+    const existingActiveReport = await GroupReport.findOne({
+      reportedGroup: group_id,
+      reportedBy: user_id,
+      status: { $in: ["pending"] }
+    });
+
+    if (existingActiveReport) {
+      return res.status(400).json({
+        error: "You already have a report being processed for this group",
+        existingReport: {
+          status: existingActiveReport.status,
+          createdAt: existingActiveReport.createdAt,
+          _id: existingActiveReport._id
+        }
+      });
+    }
+
+    const pendingReportsCount = await GroupReport.countDocuments({
+      reportedGroup: group_id,
+      status: { $in: ["pending", "investigating"] }
+    });
+    const totalPendingReports = pendingReportsCount + 1;
+    let newSeverity = "low";
+    if (totalPendingReports >= 30) {
+      newSeverity = "critical";
+    } else if (totalPendingReports >= 20) {
+      newSeverity = "high";
+    } else if (totalPendingReports >= 10) {
+      newSeverity = "medium";
+    } else if (totalPendingReports >= 1) {
+      newSeverity = "low";
+    }
+
+    // Tạo report mới
+    const report = await GroupReport.create({
+      reportedBy: user_id,
+      reportedGroup: group_id,
+      reportType,
+      reason,
+      status: "pending",
+    });
+
+    group.severity = newSeverity;
+    if (newSeverity === "critical" || newSeverity === "high") {
+      group.status = "investigating";
+    }
+    await group.save();
+
+    res.status(201).json({
+      message: "Report submitted successfully. Admins will review it soon.",
+      report: {
+        _id: report._id,
+        reportType: report.reportType,
+        reason: report.reason,
+        status: report.status,
+        createdAt: report.createdAt,
+      },
+      group: {
+        _id: group._id,
+        name: group.name,
+        severity: group.severity,
+        status: group.status,
+        totalPendingReports
+      }
+    });
+
+  } catch (err) {
+    // Handle duplicate report error từ MongoDB unique index
+    if (err.code === 11000) {
+      return res.status(400).json({
+        error: "You have already reported this group"
+      });
+    }
+
+    console.error("createGroupReport error:", err);
+    res.status(500).json({ error: err.message });
   }
 };
 
@@ -948,4 +1197,5 @@ module.exports = {
   demoteOrTransferCreator,
   getUserGroups,
   searchGroups,
+  createGroupReport,
 };

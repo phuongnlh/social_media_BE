@@ -2,61 +2,78 @@ require("dotenv").config();
 const jwt = require("jsonwebtoken");
 const redisClient = require("../config/database.redis");
 const { signToken } = require("../utils/jwt_utils");
-const publicKey = require("fs").readFileSync(
-  "./src/config/public_key.pem",
-  "utf-8"
-);
+const FCMToken = require("../models/fcm_tokens.model");
+const publicKey = require("fs").readFileSync("./src/config/public_key.pem", "utf-8");
 
 const refreshAccessToken = async (req, res) => {
   const refreshToken = req.cookies.refreshToken;
-  if (!refreshToken)
-    return res.status(403).json({ message: "No refresh token" });
+  if (!refreshToken) return res.status(403).json({ message: "No refresh token" });
 
   try {
+    // ✅ Xác thực refresh token
     const payload = jwt.verify(refreshToken, publicKey, {
       algorithms: ["RS256"],
     });
-    const key = `refresh:${payload.id}:${refreshToken}`;
-    const exists = await redisClient.exists(key);
-    if (!exists) {
-      // 🚨 Replay attack hoặc token đã bị xóa
-      // → Xóa toàn bộ session của user
-      const pattern = `refresh:${payload.id}:*`;
-      const keys = await redisClient.keys(pattern);
-      if (keys.length > 0) {
-        await Promise.all(keys.map((key) => redisClient.del(key)));
-      }
 
-      return res
-        .status(403)
-        .json({ message: "Possible replay attack. All sessions terminated." });
-    }
+    const userId = payload.id;
+    const key = `refresh:${userId}:${refreshToken}`;
 
-    const newAccessToken = signToken({ id: payload.id }, "15m");
-    const newRefreshToken = signToken({ id: payload.id }, "7d");
+    // ✅ Kiểm tra token có tồn tại trong Redis không
+    // const exists = await redisClient.exists(key);
 
-    // ✅ Lưu refresh token mới vào Redis
-    const newRefreshKey = `refresh:${payload.id}:${newRefreshToken}`;
-    await redisClient.set(newRefreshKey, "valid", {
-      EX: 60 * 60 * 24 * 7, // 7 ngày
-    });
-    // Thêm refresh token vào danh sách phiên của người dùng
-    const userRefreshTokensSet = `user-sessions:${payload.id}`;
-    await redisClient.sAdd(userRefreshTokensSet, newRefreshToken);
-    // ✅ Gửi refresh token mới vào cookie
+    // if (!exists) {
+    //   // Kiểm tra xem user có token mới gần đây không (để phân biệt replay thật)
+    //   const recentTokens = await redisClient.sMembers(`user-sessions:${userId}`);
+
+    //   if (recentTokens.length > 0) {
+    //     // ⚠️ Có token mới => Có thể là refresh song song → không xoá session
+    //     return res.status(403).json({ message: "Refresh token expired" });
+    //   }
+
+    //   // 🚨 Replay attack thật → xoá toàn bộ session
+    //   const userTokensKey = `user-sessions:${userId}`;
+    //   const oldTokens = await redisClient.sMembers(userTokensKey);
+    //   if (oldTokens.length > 0) {
+    //     const delKeys = oldTokens.map((t) => `refresh:${userId}:${t}`);
+    //     await redisClient.del(userTokensKey, ...delKeys);
+    //   }
+    //   await FCMToken.deleteMany({ user_id: userId });
+
+    //   return res.status(403).json({
+    //     message: "Possible replay attack. All sessions terminated.",
+    //   });
+    // }
+
+    // ✅ Tạo token mới
+    const newAccessToken = signToken({ id: userId }, "15m");
+    const newRefreshToken = signToken({ id: userId }, "7d");
+    const newKey = `refresh:${userId}:${newRefreshToken}`;
+    const userSessionsKey = `user-sessions:${userId}`;
+
+    // ✅ Transaction để đảm bảo nguyên tử (atomic)
+    await redisClient
+      .multi()
+      .set(newKey, "valid", { EX: 60 * 60 * 24 * 7 })
+      .sAdd(userSessionsKey, newRefreshToken)
+      .expire(userSessionsKey, 60 * 60 * 24 * 7)
+      .expire(key, 10)
+      .exec();
+
+    // ✅ Cập nhật cookie an toàn
     res.cookie("refreshToken", newRefreshToken, {
       httpOnly: true,
       secure: false,
-      domain: process.env.FRONTEND_URI,
       sameSite: "Lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
-    // ✅ Token hợp lệ → Xóa cái cũ
-    await redisClient.del(key);
 
-    res.status(200).json({ accessToken: newAccessToken });
+    res.status(200).json({
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
+    });
   } catch (err) {
-    res.status(403).json({ message: "Invalid refresh token", err });
+    console.error("Refresh token error:", err.message);
+    res.status(403).json({ message: "Invalid refresh token", err: err.message });
   }
 };
 

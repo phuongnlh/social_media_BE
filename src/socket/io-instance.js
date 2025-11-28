@@ -5,9 +5,10 @@ let io;
 // Lưu trữ userSocketMap để có thể truy cập từ bất kỳ đâu
 let userSocketMap = new Map();
 let notificationUserSocketMap = new Map();
+let callUserSocketMap = new Map();
 
 // Thiết lập instance Socket.IO để sử dụng toàn cục
-const setSocketIO = (socketIO, socketMap, notificationSocketMap) => {
+const setSocketIO = (socketIO, socketMap, notificationSocketMap, callUserSocketMap) => {
   io = socketIO;
   if (socketMap) {
     userSocketMap = socketMap;
@@ -15,9 +16,13 @@ const setSocketIO = (socketIO, socketMap, notificationSocketMap) => {
   if (notificationSocketMap) {
     notificationUserSocketMap = notificationSocketMap;
   }
-  // Gắn notificationUserSocketMap vào io instance để truy cập dễ dàng
+  if (callUserSocketMap) {
+    callUserSocketMap = callUserSocketMap;
+  }
   if (io) {
     io.notificationUserSocketMap = notificationUserSocketMap;
+    io.callUserSocketMap = callUserSocketMap;
+    io.userSocketMap = userSocketMap;
   }
 };
 
@@ -39,9 +44,14 @@ const getNotificationUserSocketMap = () => {
   return notificationUserSocketMap;
 };
 
+const getCallUserSocketMap = () => {
+  return callUserSocketMap;
+};
+
 module.exports = {
   setSocketIO,
   getSocketIO,
   getUserSocketMap,
   getNotificationUserSocketMap,
+  getCallUserSocketMap,
 };

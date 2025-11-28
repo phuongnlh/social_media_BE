@@ -22,14 +22,12 @@ const genToken = async (req, res) => {
     if (!APP_ID || !APP_CERTIFICATE) {
       return res.status(500).json({
         success: false,
-        message:
-          "Agora configuration is missing. Please check environment variables.",
+        message: "Agora configuration is missing. Please check environment variables.",
       });
     }
 
     // Set role (publisher can publish and subscribe, audience can only subscribe)
-    const rtcRole =
-      role === "audience" ? RtcRole.SUBSCRIBER : RtcRole.PUBLISHER;
+    const rtcRole = role === "audience" ? RtcRole.SUBSCRIBER : RtcRole.PUBLISHER;
 
     // Calculate token expiration
     const currentTimestamp = Math.floor(Date.now() / 1000);
@@ -45,9 +43,7 @@ const genToken = async (req, res) => {
       privilegeExpiredTs
     );
 
-    console.log(
-      `🎯 Generated Agora token for channel: ${channelName}, uid: ${uid}`
-    );
+    console.log(`🎯 Generated Agora token for channel: ${channelName}, uid: ${uid}`);
 
     res.status(200).json({
       success: true,
@@ -80,17 +76,14 @@ const genUserToken = async (req, res) => {
       });
     }
 
-    // Use userId as uid for Agora
-    const uid = parseInt(userId) || 0;
-
     const currentTimestamp = Math.floor(Date.now() / 1000);
     const privilegeExpiredTs = currentTimestamp + EXPIRATION_TIME;
 
-    const token = RtcTokenBuilder.buildTokenWithUid(
+    const token = RtcTokenBuilder.buildTokenWithAccount(
       APP_ID,
       APP_CERTIFICATE,
       channelName,
-      uid,
+      userId,
       RtcRole.PUBLISHER,
       privilegeExpiredTs
     );
@@ -101,7 +94,6 @@ const genUserToken = async (req, res) => {
         token,
         appId: APP_ID,
         channelName,
-        uid,
         userId,
         expiredTs: privilegeExpiredTs,
       },

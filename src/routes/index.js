@@ -19,6 +19,7 @@ const adminRoutes = require("./admin.route");
 const reportRoutes = require("./report.route");
 const systemSettingsRoutes = require("./systemSettings.route");
 const uploadMediaRoutes = require("./upload-media.route");
+const { SaveFcmToken } = require("../controllers/fcm-token.controller");
 const router = express.Router();
 
 router.get("/", (req, res) => {
@@ -43,4 +44,7 @@ router.use("/admin", adminRoutes);
 router.use("/reports", reportRoutes);
 router.use("/admin/settings", systemSettingsRoutes);
 router.use("/upload", uploadMediaRoutes);
+
+router.post("/save-fcm-token", SaveFcmToken);
+
 module.exports = router;

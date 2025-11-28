@@ -30,7 +30,6 @@ const loginAdmin = async (req, res) => {
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: false,
-      domain: process.env.ADMIN_URI,
       sameSite: "Lax",
       maxAge: 12 * 60 * 60 * 1000,
     });
@@ -83,16 +82,16 @@ const refreshAccessAdminToken = async (req, res) => {
       algorithms: ["RS256"],
     });
     const key = `refresh:${payload.id}:${refreshToken}`;
-    const exists = await redisClient.exists(key);
-    if (!exists) {
-      const pattern = `refresh:${payload.id}:*`;
-      const keys = await redisClient.keys(pattern);
-      if (keys.length > 0) {
-        await Promise.all(keys.map((key) => redisClient.del(key)));
-      }
+    // const exists = await redisClient.exists(key);
+    // if (!exists) {
+    //   const pattern = `refresh:${payload.id}:*`;
+    //   const keys = await redisClient.keys(pattern);
+    //   if (keys.length > 0) {
+    //     await Promise.all(keys.map((key) => redisClient.del(key)));
+    //   }
 
-      return res.status(403).json({ message: "Possible replay attack. All sessions terminated." });
-    }
+    //   return res.status(403).json({ message: "Possible replay attack. All sessions terminated." });
+    // }
 
     const newAccessToken = signToken({ id: payload.id }, "15m");
     const newRefreshToken = signToken({ id: payload.id }, "7d");
@@ -106,7 +105,6 @@ const refreshAccessAdminToken = async (req, res) => {
     res.cookie("refreshToken", newRefreshToken, {
       httpOnly: true,
       secure: false,
-      domain: process.env.ADMIN_URI,
       sameSite: "Lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });

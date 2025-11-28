@@ -23,6 +23,11 @@ const postSchema = new mongoose.Schema(
     },
     moderation_status: { type: String, default: "normal" },
     moderation_details: { type: Object, default: {} },
+    severity: {
+      type: String,
+      enum: ["low", "medium", "high", "critical"],
+      default: "low"
+    },
     viewCount: { type: Number, default: 0 },
   },
   { timestamps: true }
